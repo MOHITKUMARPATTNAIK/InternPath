@@ -17,10 +17,11 @@ interface AuthContextType {
   loading: boolean;
   isConfigured: boolean;
   signIn: (email: string, password?: string) => Promise<{ error?: string }>;
-  signUp: (email: string, password?: string, displayName?: string) => Promise<{ error?: string }>;
+  signUp: (email: string, password?: string, displayName?: string) => Promise<{ error?: string; requiresEmailConfirmation?: boolean }>;
   signOut: () => Promise<void>;
   updateProfile: (data: Partial<UserProfile>) => Promise<{ error?: string }>;
   switchDemoRole: (role: 'student' | 'admin') => void;
+  loginAsDemo: (role?: 'student' | 'admin') => void;
   resetPassword: (email: string) => Promise<{ error?: string; message?: string }>;
 }
 
@@ -90,23 +91,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           try {
             setUser(JSON.parse(storedUser));
           } catch {
-            setUser(DEFAULT_DEMO_USER);
+            setUser(null);
           }
         } else {
-          // Preload demo student by default for instant exploration
-          setUser(DEFAULT_DEMO_USER);
-          localStorage.setItem('internpath_demo_user', JSON.stringify(DEFAULT_DEMO_USER));
+          setUser(null);
         }
 
         if (storedProfile) {
           try {
             setProfile(JSON.parse(storedProfile));
           } catch {
-            setProfile(DEFAULT_DEMO_PROFILE);
+            setProfile(null);
           }
         } else {
-          setProfile(DEFAULT_DEMO_PROFILE);
-          localStorage.setItem('internpath_demo_profile', JSON.stringify(DEFAULT_DEMO_PROFILE));
+          setProfile(null);
         }
       }
       setLoading(false);
@@ -172,7 +170,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signUp = async (email: string, password?: string, displayName?: string): Promise<{ error?: string }> => {
+  const signUp = async (
+    email: string,
+    password?: string,
+    displayName?: string
+  ): Promise<{ error?: string; requiresEmailConfirmation?: boolean }> => {
     setLoading(true);
     if (isConfigured) {
       const supabase = createClient();
@@ -187,6 +189,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (error) {
         setLoading(false);
         return { error: error.message };
+      }
+      if (data.user && !data.session) {
+        setLoading(false);
+        return { requiresEmailConfirmation: true };
       }
       if (data.user) {
         const newProfile: UserProfile = {
@@ -287,6 +293,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const loginAsDemo = (role: 'student' | 'admin' = 'student') => {
+    const isAdm = role === 'admin';
+    const authUser: AuthUser = isAdm
+      ? {
+          id: 'usr-admin-demo-99',
+          email: 'admin.evaluator@internpath.in',
+          display_name: 'Admin Evaluator',
+          role: 'admin',
+        }
+      : DEFAULT_DEMO_USER;
+    const userProf: UserProfile = isAdm
+      ? {
+          ...DEFAULT_DEMO_PROFILE,
+          id: authUser.id,
+          email: authUser.email,
+          display_name: authUser.display_name,
+          role: 'admin',
+        }
+      : DEFAULT_DEMO_PROFILE;
+
+    setUser(authUser);
+    setProfile(userProf);
+    if (!isConfigured) {
+      localStorage.setItem('internpath_demo_user', JSON.stringify(authUser));
+      localStorage.setItem('internpath_demo_profile', JSON.stringify(userProf));
+    }
+  };
+
   const resetPassword = async (email: string): Promise<{ error?: string; message?: string }> => {
     if (isConfigured) {
       const supabase = createClient();
@@ -311,6 +345,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         updateProfile,
         switchDemoRole,
+        loginAsDemo,
         resetPassword,
       }}
     >

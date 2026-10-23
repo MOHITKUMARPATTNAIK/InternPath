@@ -22,10 +22,16 @@ import {
 
 export default function HomePage() {
   const router = useRouter();
-  const { user, profile } = useAuth();
+  const { user, profile, loading } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [internships, setInternships] = useState<Internship[]>([]);
   const [recommended, setRecommended] = useState<ScoredInternship[]>([]);
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.replace('/auth/signup');
+    }
+  }, [loading, user, router]);
 
   useEffect(() => {
     async function loadData() {
@@ -37,8 +43,10 @@ export default function HomePage() {
         setRecommended(recs.slice(0, 3));
       }
     }
-    loadData();
-  }, [profile]);
+    if (user) {
+      loadData();
+    }
+  }, [profile, user]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,6 +98,17 @@ export default function HomePage() {
     { label: 'Upcoming Deadlines', href: '/internships?deadlineFilter=30days', icon: Calendar },
     { label: 'Unpaid / Research Credit', href: '/internships?stipendStatus=unpaid', icon: CheckCircle },
   ];
+
+  if (loading || !user) {
+    return (
+      <div className="min-h-[85vh] flex items-center justify-center bg-slate-950">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-3 border-cyan-400 border-t-transparent rounded-full animate-spin shadow-[0_0_20px_rgba(6,182,212,0.5)]" />
+          <p className="text-xs text-cyan-300 font-semibold tracking-wider uppercase">Loading InternPath...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-14 pb-16">
