@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "npx tsx scripts/test-internpath.ts"
+    "test": "npx tsx scripts/test-internpath.ts && npx tsx scripts/test-collection-pipeline.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

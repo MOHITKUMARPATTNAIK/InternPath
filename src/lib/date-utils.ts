@@ -121,22 +121,42 @@ export function isDeadlineClosingSoon(
 }
 
 /**
- * Helper to compute application status directly from an internship object
+ * Helper to compute application status directly from an internship object or date strings
  */
 export function getComputedApplicationStatus(
-  internship: {
-    application_opening_date?: string | null;
-    application_deadline?: string | null;
-    last_verified_at?: string | null;
-  },
+  itemOrOpening?:
+    | {
+        application_opening_date?: string | null;
+        application_deadline?: string | null;
+        last_verified_at?: string | null;
+      }
+    | string
+    | null,
+  deadlineOrRef?: string | Date | null,
+  lastVerifiedOrRef?: string | Date | null,
   referenceDate?: Date
 ): ApplicationStatus {
-  return computeApplicationStatus(
-    internship.application_opening_date,
-    internship.application_deadline,
-    internship.last_verified_at,
-    referenceDate
-  );
+  if (typeof itemOrOpening === 'object' && itemOrOpening !== null && !(itemOrOpening instanceof Date)) {
+    const ref = deadlineOrRef instanceof Date ? deadlineOrRef : undefined;
+    return computeApplicationStatus(
+      itemOrOpening.application_opening_date,
+      itemOrOpening.application_deadline,
+      itemOrOpening.last_verified_at,
+      ref
+    );
+  }
+
+  const openingDate = typeof itemOrOpening === 'string' ? itemOrOpening : null;
+  const deadlineDate = typeof deadlineOrRef === 'string' ? deadlineOrRef : null;
+  const lastVerified = typeof lastVerifiedOrRef === 'string' ? lastVerifiedOrRef : null;
+  const ref =
+    deadlineOrRef instanceof Date
+      ? deadlineOrRef
+      : lastVerifiedOrRef instanceof Date
+      ? lastVerifiedOrRef
+      : referenceDate;
+
+  return computeApplicationStatus(openingDate, deadlineDate, lastVerified, ref);
 }
 
 /**

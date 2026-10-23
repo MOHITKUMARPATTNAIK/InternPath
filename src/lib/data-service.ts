@@ -10,12 +10,16 @@ import {
   ScoredInternship,
   EligibilityEvaluation,
   LinkStatus,
+  CollectionFrequency,
 } from '@/types';
 import { INITIAL_SOURCES, INITIAL_INTERNSHIPS, INITIAL_COLLECTION_RUNS } from '@/data/seedData';
 import { createClient, isSupabaseConfigured } from './supabase/client';
 import { evaluateEligibility } from './eligibility-engine';
 import { getComputedApplicationStatus, isDeadlineClosingSoon, isDeadlineExpired } from './date-utils';
 import { validateApplicationUrl } from './link-validator';
+import { executeSourceCollection } from './collection/pipeline';
+import { sourceRegistry, RegisteredSource } from './collection/source-registry';
+import { OpportunityChangeLog, AdapterRunOptions } from './collection/types';
 
 const STORAGE_KEYS = {
   SOURCES: 'internpath_sources',
@@ -23,6 +27,8 @@ const STORAGE_KEYS = {
   SAVED: 'internpath_saved_internships',
   RUNS: 'internpath_collection_runs',
   REPORTS: 'internpath_reports',
+  CHANGE_LOGS: 'internpath_change_logs',
+  REVIEW_QUEUE: 'internpath_review_queue',
 };
 
 // Helper to get local data safely
@@ -575,55 +581,323 @@ export async function updateReportStatus(
 }
 
 // ------------------------------------------------------------------------------
-// COLLECTION PIPELINE (Source Monitoring & Ingestion Simulation)
+// COLLECTION PIPELINE (Real Source Adapters, Review Queue & Scheduling)
 // ------------------------------------------------------------------------------
 export async function getCollectionRuns(): Promise<CollectionRun[]> {
   if (isSupabaseConfigured()) {
     const supabase = createClient();
     if (supabase) {
-      const { data, error } = await supabase.from('collection_runs').select('*').order('started_at', { ascending: false });
+      const { data, error } = await supabase
+        .from('collection_runs')
+        .select('*')
+        .order('started_at', { ascending: false });
       if (!error && data) return data as CollectionRun[];
     }
   }
   return getLocal<CollectionRun[]>(STORAGE_KEYS.RUNS, INITIAL_COLLECTION_RUNS);
 }
 
-export async function runSourceCheck(sourceId: string): Promise<CollectionRun> {
+export async function runSourceCheck(
+  sourceId: string,
+  options?: AdapterRunOptions
+): Promise<CollectionRun> {
   const source = await getSourceById(sourceId);
-  const sourceName = source ? source.name : 'Unknown Source';
+  if (!source) {
+    throw new Error(`Source with ID "${sourceId}" was not found.`);
+  }
 
-  const newRun: CollectionRun = {
-    id: 'run-' + Date.now(),
-    source_id: sourceId,
-    source_name: sourceName,
-    started_at: new Date().toISOString(),
-    completed_at: new Date(Date.now() + 2400).toISOString(),
-    status: 'success',
-    records_discovered: 1,
-    records_created: 0,
-    records_updated: 1,
-    error_summary: `Checked domain ${source?.official_domain || 'official portal'}. Application guidelines validated; SSL & canonical URL healthy.`,
+  // Get complete current catalog (including pending review) for deduplication
+  let allInternships: Internship[] = [];
+  if (isSupabaseConfigured()) {
+    const supabase = createClient();
+    if (supabase) {
+      const { data } = await supabase.from('internships').select('*');
+      if (data) allInternships = data as Internship[];
+    }
+  }
+  if (allInternships.length === 0) {
+    allInternships = getLocal<Internship[]>(STORAGE_KEYS.INTERNSHIPS, INITIAL_INTERNSHIPS);
+  }
+
+  // Execute collection pipeline for source
+  const result = await executeSourceCollection(source as RegisteredSource, allInternships, options);
+  const summary = result.summary;
+
+  const collectionRunRecord: CollectionRun = {
+    id: summary.runId,
+    source_id: source.id,
+    source_name: source.name,
+    started_at: summary.startedAt,
+    completed_at: summary.completedAt,
+    status: summary.status,
+    records_discovered: summary.recordsDiscovered,
+    records_created: summary.recordsCreated,
+    records_updated: summary.recordsUpdated,
+    records_skipped: summary.recordsSkipped,
+    records_pending_review: summary.recordsPendingReview,
+    duration_ms: summary.durationMs,
+    error_summary:
+      summary.errors.length > 0
+        ? summary.errors.join('; ')
+        : summary.warnings.length > 0
+        ? summary.warnings.join('; ')
+        : `Collection finished successfully in ${summary.durationMs}ms. Discovered: ${summary.recordsDiscovered}, Created: ${summary.recordsCreated}, Updated: ${summary.recordsUpdated}.`,
+  };
+
+  // 1. Update source scheduling timestamps
+  const nextScheduled = sourceRegistry.calculateNextSchedule(
+    source.collection_frequency || 'daily'
+  );
+  const sourceUpdates: Partial<Source> = {
+    last_checked: summary.completedAt,
+    last_attempted_check: summary.startedAt,
+    next_scheduled_check: nextScheduled,
+    last_error: summary.errors.length > 0 ? summary.errors.join('; ') : null,
+  };
+  if (summary.status === 'success' || summary.status === 'partial') {
+    sourceUpdates.last_successful_check = summary.completedAt;
+  }
+  await updateSource(sourceId, sourceUpdates);
+
+  // 2. Persist newly created internships
+  for (const item of result.createdInternships) {
+    await createInternship(item);
+  }
+
+  // 3. Persist updated internships
+  for (const item of result.updatedInternships) {
+    await updateInternship(item.id, item);
+  }
+
+  // 4. Persist queued candidates into review queue
+  if (result.queuedInternships.length > 0) {
+    if (isSupabaseConfigured()) {
+      const supabase = createClient();
+      if (supabase) {
+        for (const queued of result.queuedInternships) {
+          await supabase.from('internships').upsert(queued);
+        }
+      }
+    }
+    const currentQueue = getLocal<Internship[]>(STORAGE_KEYS.REVIEW_QUEUE, []);
+    for (const q of result.queuedInternships) {
+      const existingIdx = currentQueue.findIndex((i) => i.id === q.id || i.title === q.title);
+      if (existingIdx >= 0) {
+        currentQueue[existingIdx] = q;
+      } else {
+        currentQueue.unshift(q);
+      }
+    }
+    setLocal(STORAGE_KEYS.REVIEW_QUEUE, currentQueue);
+  }
+
+  // 5. Persist change logs
+  if (result.changeLogs.length > 0) {
+    const existingLogs = getLocal<OpportunityChangeLog[]>(STORAGE_KEYS.CHANGE_LOGS, []);
+    setLocal(STORAGE_KEYS.CHANGE_LOGS, [...result.changeLogs, ...existingLogs].slice(0, 500));
+  }
+
+  // 6. Persist run record
+  if (isSupabaseConfigured()) {
+    const supabase = createClient();
+    if (supabase) {
+      await supabase.from('collection_runs').insert(collectionRunRecord);
+    }
+  }
+  const runs = getLocal<CollectionRun[]>(STORAGE_KEYS.RUNS, INITIAL_COLLECTION_RUNS);
+  runs.unshift(collectionRunRecord);
+  setLocal(STORAGE_KEYS.RUNS, runs);
+
+  return collectionRunRecord;
+}
+
+export async function runAllDueSources(
+  options?: { forceAll?: boolean } & AdapterRunOptions
+): Promise<CollectionRun[]> {
+  const sources = await getSources();
+  const dueSources = sources.filter((s) => {
+    if (options?.forceAll) return true;
+    return sourceRegistry.isSourceDue(s as RegisteredSource);
+  });
+
+  const runRecords: CollectionRun[] = [];
+
+  for (const source of dueSources) {
+    try {
+      const record = await runSourceCheck(source.id, options);
+      runRecords.push(record);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      const failedRecord: CollectionRun = {
+        id: 'failed-' + Date.now() + '-' + source.id,
+        source_id: source.id,
+        source_name: source.name,
+        started_at: new Date().toISOString(),
+        completed_at: new Date().toISOString(),
+        status: 'failed',
+        records_discovered: 0,
+        records_created: 0,
+        records_updated: 0,
+        error_summary: errorMsg,
+      };
+      runRecords.push(failedRecord);
+    }
+  }
+
+  return runRecords;
+}
+
+export async function toggleSourceEnabled(sourceId: string, enabled: boolean): Promise<Source | null> {
+  const source = await getSourceById(sourceId);
+  if (!source) return null;
+
+  const updates: Partial<Source> = {
+    enabled,
+    next_scheduled_check: enabled
+      ? sourceRegistry.calculateNextSchedule(source.collection_frequency || 'daily')
+      : null,
+  };
+
+  return await updateSource(sourceId, updates);
+}
+
+export async function updateSourceFrequency(
+  sourceId: string,
+  frequency: CollectionFrequency
+): Promise<Source | null> {
+  const updates: Partial<Source> = {
+    collection_frequency: frequency,
+    next_scheduled_check: sourceRegistry.calculateNextSchedule(frequency),
+  };
+  return await updateSource(sourceId, updates);
+}
+
+export async function getReviewQueue(): Promise<Internship[]> {
+  if (isSupabaseConfigured()) {
+    const supabase = createClient();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('internships')
+        .select('*')
+        .in('review_status', ['pending_review', 'flagged'])
+        .order('created_at', { ascending: false });
+      if (!error && data && data.length > 0) return data as Internship[];
+    }
+  }
+  return getLocal<Internship[]>(STORAGE_KEYS.REVIEW_QUEUE, []);
+}
+
+export async function approveReviewCandidate(candidateId: string): Promise<Internship | null> {
+  const updates: Partial<Internship> = {
+    publication_status: 'published',
+    review_status: 'approved',
+    verification_status: 'official_verified',
+    published_at: new Date().toISOString(),
+    last_verified_at: new Date().toISOString(),
+    verification_notes: 'Approved via Administrator Review Queue.',
+  };
+
+  // If in Supabase
+  if (isSupabaseConfigured()) {
+    const supabase = createClient();
+    if (supabase) {
+      const { data } = await supabase
+        .from('internships')
+        .update(updates)
+        .eq('id', candidateId)
+        .select()
+        .single();
+      if (data) return data as Internship;
+    }
+  }
+
+  // Local storage management: Remove from queue and add to internships
+  const queue = getLocal<Internship[]>(STORAGE_KEYS.REVIEW_QUEUE, []);
+  const candidate = queue.find((c) => c.id === candidateId);
+  if (!candidate) return null;
+
+  const approved: Internship = {
+    ...candidate,
+    ...updates,
+  };
+
+  const remainingQueue = queue.filter((c) => c.id !== candidateId);
+  setLocal(STORAGE_KEYS.REVIEW_QUEUE, remainingQueue);
+
+  const catalog = getLocal<Internship[]>(STORAGE_KEYS.INTERNSHIPS, INITIAL_INTERNSHIPS);
+  const exists = catalog.findIndex((i) => i.id === candidateId);
+  if (exists >= 0) {
+    catalog[exists] = approved;
+  } else {
+    catalog.unshift(approved);
+  }
+  setLocal(STORAGE_KEYS.INTERNSHIPS, catalog);
+
+  return approved;
+}
+
+export async function rejectReviewCandidate(
+  candidateId: string,
+  reason?: string
+): Promise<Internship | null> {
+  const updates: Partial<Internship> = {
+    publication_status: 'archived',
+    review_status: 'flagged',
+    verification_notes: reason || 'Rejected during administrative review.',
+    updated_at: new Date().toISOString(),
   };
 
   if (isSupabaseConfigured()) {
     const supabase = createClient();
     if (supabase) {
-      await supabase.from('collection_runs').insert(newRun);
-      await supabase.from('sources').update({ last_checked: new Date().toISOString() }).eq('id', sourceId);
-      return newRun;
+      const { data } = await supabase
+        .from('internships')
+        .update(updates)
+        .eq('id', candidateId)
+        .select()
+        .single();
+      if (data) return data as Internship;
     }
   }
 
-  const runs = getLocal<CollectionRun[]>(STORAGE_KEYS.RUNS, INITIAL_COLLECTION_RUNS);
-  runs.unshift(newRun);
-  setLocal(STORAGE_KEYS.RUNS, runs);
+  const queue = getLocal<Internship[]>(STORAGE_KEYS.REVIEW_QUEUE, []);
+  const candidate = queue.find((c) => c.id === candidateId);
+  if (!candidate) return null;
 
-  // Update source last_checked
-  if (source) {
-    await updateSource(sourceId, { last_checked: new Date().toISOString() });
+  const rejected = { ...candidate, ...updates };
+  const remaining = queue.filter((c) => c.id !== candidateId);
+  setLocal(STORAGE_KEYS.REVIEW_QUEUE, remaining);
+  return rejected;
+}
+
+export async function requestRecheckCandidate(candidateId: string): Promise<Internship | null> {
+  const queue = getLocal<Internship[]>(STORAGE_KEYS.REVIEW_QUEUE, []);
+  const candidate = queue.find((c) => c.id === candidateId);
+  if (!candidate) return null;
+
+  const checkRes = await validateApplicationUrl(candidate.official_application_url);
+  const rechecked: Internship = {
+    ...candidate,
+    link_status: checkRes.status,
+    last_link_checked_at: checkRes.checked_at,
+    last_http_status: checkRes.http_status,
+    final_url: checkRes.final_url,
+    link_check_message: checkRes.error_message || 'Re-checked successfully.',
+    updated_at: new Date().toISOString(),
+  };
+
+  const idx = queue.findIndex((c) => c.id === candidateId);
+  if (idx >= 0) {
+    queue[idx] = rechecked;
+    setLocal(STORAGE_KEYS.REVIEW_QUEUE, queue);
   }
+  return rechecked;
+}
 
-  return newRun;
+export async function getChangeLogs(internshipId?: string): Promise<OpportunityChangeLog[]> {
+  const logs = getLocal<OpportunityChangeLog[]>(STORAGE_KEYS.CHANGE_LOGS, []);
+  if (!internshipId) return logs;
+  return logs.filter((l) => l.internshipId === internshipId);
 }
 
 // Reset data helper for testing
@@ -633,4 +907,6 @@ export function resetDemoData(): void {
   setLocal(STORAGE_KEYS.INTERNSHIPS, INITIAL_INTERNSHIPS);
   setLocal(STORAGE_KEYS.RUNS, INITIAL_COLLECTION_RUNS);
   setLocal(STORAGE_KEYS.REPORTS, []);
+  setLocal(STORAGE_KEYS.REVIEW_QUEUE, []);
+  setLocal(STORAGE_KEYS.CHANGE_LOGS, []);
 }

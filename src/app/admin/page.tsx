@@ -9,6 +9,7 @@ import {
   CollectionRun,
   Report,
   PublicationStatus,
+  CollectionFrequency,
 } from '@/types';
 import {
   getInternships,
@@ -19,10 +20,19 @@ import {
   updateInternship,
   createSource,
   runSourceCheck,
+  runAllDueSources,
+  toggleSourceEnabled,
+  updateSourceFrequency,
+  getReviewQueue,
+  approveReviewCandidate,
+  rejectReviewCandidate,
+  requestRecheckCandidate,
+  getChangeLogs,
   updateReportStatus,
   validateAndUpdateInternshipLink,
   validateAllInternshipLinks,
 } from '@/lib/data-service';
+import { OpportunityChangeLog } from '@/lib/collection/types';
 import { DISCIPLINES, SOURCE_CATEGORIES, YEARS } from '@/components/internships/InternshipFilters';
 import { VerificationBadge } from '@/components/ui/VerificationBadge';
 import {
@@ -30,19 +40,31 @@ import {
   Plus,
   RefreshCw,
   ExternalLink,
-  CheckCircle,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
   Bot,
   Flag,
+  Inbox,
+  Play,
+  History,
+  Power,
 } from 'lucide-react';
 
 export default function AdminDashboardPage() {
   const { user, switchDemoRole } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'internships' | 'sources' | 'pipeline' | 'reports'>('internships');
+  const [activeTab, setActiveTab] = useState<
+    'internships' | 'review_queue' | 'sources' | 'pipeline' | 'reports'
+  >('internships');
   const [internships, setInternships] = useState<Internship[]>([]);
+  const [reviewQueue, setReviewQueue] = useState<Internship[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
   const [runs, setRuns] = useState<CollectionRun[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
+  const [changeLogs, setChangeLogs] = useState<OpportunityChangeLog[]>([]);
+  const [showLogsModal, setShowLogsModal] = useState(false);
+  const [runningAllSources, setRunningAllSources] = useState(false);
 
   // New Internship Modal State
   const [showAddInternshipModal, setShowAddInternshipModal] = useState(false);
@@ -116,16 +138,20 @@ export default function AdminDashboardPage() {
   };
 
   const loadAll = async () => {
-    const [allInts, allSrcs, allRuns, allReps] = await Promise.all([
+    const [allInts, allSrcs, allRuns, allReps, allQueue, allLogs] = await Promise.all([
       getInternships(),
       getSources(),
       getCollectionRuns(),
       getReports(),
+      getReviewQueue(),
+      getChangeLogs(),
     ]);
     setInternships(allInts);
     setSources(allSrcs);
     setRuns(allRuns);
     setReports(allReps);
+    setReviewQueue(allQueue);
+    setChangeLogs(allLogs);
   };
 
   useEffect(() => {
@@ -182,10 +208,74 @@ export default function AdminDashboardPage() {
     try {
       const run = await runSourceCheck(sourceId);
       setRuns((prev) => [run, ...prev]);
-      const updatedSources = await getSources();
+      const [updatedSources, updatedInts, updatedQueue, updatedLogs] = await Promise.all([
+        getSources(),
+        getInternships(),
+        getReviewQueue(),
+        getChangeLogs(),
+      ]);
       setSources(updatedSources);
+      setInternships(updatedInts);
+      setReviewQueue(updatedQueue);
+      setChangeLogs(updatedLogs);
+      alert(`Collection completed for ${run.source_name}: ${run.error_summary || 'Done'}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`Collector error: ${msg}`);
     } finally {
       setRunningSourceId(null);
+    }
+  };
+
+  const handleRunAllDueSources = async () => {
+    setRunningAllSources(true);
+    try {
+      const records = await runAllDueSources({ forceAll: true });
+      await loadAll();
+      alert(`Batch collection completed. Processed ${records.length} sources.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`Batch collection error: ${msg}`);
+    } finally {
+      setRunningAllSources(false);
+    }
+  };
+
+  const handleApproveCandidate = async (candidateId: string) => {
+    const res = await approveReviewCandidate(candidateId);
+    if (res) {
+      setReviewQueue((prev) => prev.filter((c) => c.id !== candidateId));
+      setInternships((prev) => [res, ...prev]);
+      alert(`Candidate "${res.title}" approved and published to active listings.`);
+    }
+  };
+
+  const handleRejectCandidate = async (candidateId: string) => {
+    const reason = prompt('Specify reason for rejecting this candidate (optional):') || undefined;
+    await rejectReviewCandidate(candidateId, reason);
+    setReviewQueue((prev) => prev.filter((c) => c.id !== candidateId));
+    alert('Candidate archived/rejected.');
+  };
+
+  const handleRecheckCandidate = async (candidateId: string) => {
+    const rechecked = await requestRecheckCandidate(candidateId);
+    if (rechecked) {
+      setReviewQueue((prev) => prev.map((c) => (c.id === candidateId ? rechecked : c)));
+      alert(`Rechecked link: ${rechecked.link_status}`);
+    }
+  };
+
+  const handleToggleSourceEnabled = async (sourceId: string, currentEnabled?: boolean) => {
+    const updated = await toggleSourceEnabled(sourceId, !(currentEnabled ?? true));
+    if (updated) {
+      setSources((prev) => prev.map((s) => (s.id === sourceId ? updated : s)));
+    }
+  };
+
+  const handleUpdateFrequency = async (sourceId: string, freq: CollectionFrequency) => {
+    const updated = await updateSourceFrequency(sourceId, freq);
+    if (updated) {
+      setSources((prev) => prev.map((s) => (s.id === sourceId ? updated : s)));
     }
   };
 
@@ -271,10 +361,14 @@ export default function AdminDashboardPage() {
         </div>
 
         {/* Global Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
           <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
-            <span className="text-slate-400 block text-[10px] uppercase font-semibold">Opportunities</span>
+            <span className="text-slate-400 block text-[10px] uppercase font-semibold">Active Listings</span>
             <span className="text-lg font-bold text-white">{internships.length}</span>
+          </div>
+          <div className="bg-slate-800/80 p-3 rounded-xl border border-amber-500/40">
+            <span className="text-amber-400 block text-[10px] uppercase font-semibold">Review Queue</span>
+            <span className="text-lg font-bold text-amber-300">{reviewQueue.length}</span>
           </div>
           <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
             <span className="text-slate-400 block text-[10px] uppercase font-semibold">Sources</span>
@@ -286,7 +380,7 @@ export default function AdminDashboardPage() {
           </div>
           <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
             <span className="text-slate-400 block text-[10px] uppercase font-semibold">Reports</span>
-            <span className="text-lg font-bold text-amber-400">
+            <span className="text-lg font-bold text-rose-400">
               {reports.filter((r) => r.status === 'pending').length}
             </span>
           </div>
@@ -304,6 +398,23 @@ export default function AdminDashboardPage() {
           }`}
         >
           <span>Internship Listings ({internships.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('review_queue')}
+          className={`pb-3 border-b-2 transition flex items-center gap-1.5 ${
+            activeTab === 'review_queue'
+              ? 'border-amber-600 text-amber-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Inbox className="w-4 h-4" />
+          <span>Review Queue</span>
+          {reviewQueue.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-500 text-white font-bold leading-none">
+              {reviewQueue.length}
+            </span>
+          )}
         </button>
 
         <button
@@ -477,6 +588,131 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
+      {/* REVIEW QUEUE TAB */}
+      {activeTab === 'review_queue' && (
+        <div className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-bold text-slate-900">
+                Editorial Review Queue ({reviewQueue.length})
+              </h2>
+              <p className="text-xs text-slate-500">
+                Discovered opportunities awaiting administrative verification due to external domains, unconfirmed criteria, or material differences.
+              </p>
+            </div>
+          </div>
+
+          {reviewQueue.length === 0 ? (
+            <div className="bg-white rounded-xl border border-slate-200 p-12 text-center space-y-2">
+              <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />
+              <h3 className="text-sm font-bold text-slate-800">Review Queue is Clear</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                No opportunities are currently awaiting verification. Discovered opportunities meeting strict automated verification criteria are auto-published; those with uncertain metadata or external domains appear here.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {reviewQueue.map((item) => (
+                <div
+                  key={item.id}
+                  className="bg-white rounded-xl border border-slate-200 p-5 shadow-2xs space-y-3"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 uppercase">
+                          Pending Review
+                        </span>
+                        <span className="text-xs font-semibold text-slate-600">
+                          {item.organization}
+                        </span>
+                        {item.department && (
+                          <span className="text-xs text-slate-400">• {item.department}</span>
+                        )}
+                      </div>
+                      <h3 className="text-sm font-bold text-slate-900">{item.title}</h3>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                      <button
+                        onClick={() => handleApproveCandidate(item.id)}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs transition"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Approve & Publish</span>
+                      </button>
+                      <button
+                        onClick={() => handleRejectCandidate(item.id)}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-xs font-bold border border-rose-200 transition"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        <span>Reject</span>
+                      </button>
+                      <button
+                        onClick={() => handleRecheckCandidate(item.id)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-medium border border-slate-200"
+                        title="Recheck Link Health"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Recheck</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-600 line-clamp-2">{item.description}</p>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                    <div>
+                      <span className="text-slate-400 block font-medium">Disciplines:</span>
+                      <span className="font-semibold text-slate-700 truncate block">
+                        {item.eligible_disciplines?.join(', ') || 'All Disciplines'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block font-medium">Stipend:</span>
+                      <span className="font-semibold text-slate-700">
+                        {item.stipend_amount ? `INR ${item.stipend_amount.toLocaleString()}` : item.stipend_status}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block font-medium">Deadline:</span>
+                      <span className="font-semibold text-slate-700">
+                        {item.application_deadline || 'Not Specified'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 block font-medium">Link Status:</span>
+                      <span className="font-semibold text-slate-700">{item.link_status}</span>
+                    </div>
+                  </div>
+
+                  {item.verification_notes && (
+                    <div className="text-[11px] bg-amber-50/70 border border-amber-200 p-2 rounded-lg text-amber-900 flex items-start gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <span>
+                        <strong>Review Reason:</strong> {item.verification_notes}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                    <a
+                      href={item.official_application_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-indigo-600 hover:text-indigo-800 font-medium inline-flex items-center gap-1"
+                    >
+                      <span>Application Portal: {item.official_application_url}</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* TAB 2: SOURCES */}
       {activeTab === 'sources' && (
         <div className="space-y-4">
@@ -484,17 +720,28 @@ export default function AdminDashboardPage() {
             <div>
               <h2 className="text-base font-bold text-slate-900">Monitored Indian Institutions</h2>
               <p className="text-xs text-slate-500">
-                Official domains, monitoring frequency, and on-demand collection triggers.
+                Official domains, configurable collection frequencies, enabled status, and on-demand crawler triggers.
               </p>
             </div>
 
-            <button
-              onClick={() => setShowAddSourceModal(true)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs transition"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Add Monitored Source</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleRunAllDueSources}
+                disabled={runningAllSources}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition disabled:opacity-50"
+              >
+                <Play className={`w-3.5 h-3.5 ${runningAllSources ? 'animate-spin' : ''}`} />
+                <span>{runningAllSources ? 'Collecting All Sources...' : 'Run All Due Sources'}</span>
+              </button>
+
+              <button
+                onClick={() => setShowAddSourceModal(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs transition"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add Source</span>
+              </button>
+            </div>
           </div>
 
           <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
@@ -502,53 +749,93 @@ export default function AdminDashboardPage() {
               <table className="w-full text-left text-xs text-slate-600">
                 <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500 border-b border-slate-200">
                   <tr>
+                    <th className="py-3 px-3">Active</th>
                     <th className="py-3 px-4">Institution Name</th>
                     <th className="py-3 px-4">Domain</th>
-                    <th className="py-3 px-4">Category</th>
-                    <th className="py-3 px-4">Method</th>
+                    <th className="py-3 px-3">Method</th>
+                    <th className="py-3 px-3">Frequency</th>
                     <th className="py-3 px-4">Last Checked</th>
-                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-4">Next Scheduled</th>
                     <th className="py-3 px-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {sources.map((src) => (
-                    <tr key={src.id} className="hover:bg-slate-50 transition">
-                      <td className="py-3 px-4 font-semibold text-slate-900">{src.name}</td>
-                      <td className="py-3 px-4 font-mono text-[11px] text-slate-700">{src.official_domain}</td>
-                      <td className="py-3 px-4">{src.source_category}</td>
-                      <td className="py-3 px-4 font-medium text-slate-700">{src.monitoring_method}</td>
-                      <td className="py-3 px-4 font-mono text-[11px]">
-                        {src.last_checked
-                          ? new Date(src.last_checked).toLocaleTimeString([], {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            }) +
-                            ' (' +
-                            new Date(src.last_checked).toLocaleDateString() +
-                            ')'
-                          : 'Never'}
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
-                          <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Active</span>
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <button
-                          onClick={() => handleRunCollector(src.id)}
-                          disabled={runningSourceId === src.id}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-[11px] font-semibold border border-indigo-200 disabled:opacity-50"
-                        >
-                          <RefreshCw
-                            className={`w-3 h-3 ${runningSourceId === src.id ? 'animate-spin' : ''}`}
-                          />
-                          <span>{runningSourceId === src.id ? 'Checking...' : 'Check Now'}</span>
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {sources.map((src) => {
+                    const isEnabled = src.enabled !== false;
+                    return (
+                      <tr key={src.id} className="hover:bg-slate-50 transition">
+                        <td className="py-3 px-3">
+                          <button
+                            onClick={() => handleToggleSourceEnabled(src.id, isEnabled)}
+                            className={`p-1 rounded-md transition ${
+                              isEnabled
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : 'bg-slate-100 text-slate-400'
+                            }`}
+                            title={isEnabled ? 'Source is enabled. Click to pause.' : 'Source paused. Click to enable.'}
+                          >
+                            <Power className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="font-semibold text-slate-900 block">{src.name}</span>
+                          {src.last_error && (
+                            <span className="text-[10px] text-rose-600 flex items-center gap-1 mt-0.5" title={src.last_error}>
+                              <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                              <span className="truncate max-w-[200px]">{src.last_error}</span>
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-700">{src.official_domain}</td>
+                        <td className="py-3 px-3 font-medium text-slate-700">{src.monitoring_method}</td>
+                        <td className="py-3 px-3">
+                          <select
+                            value={src.collection_frequency || 'daily'}
+                            onChange={(e) => handleUpdateFrequency(src.id, e.target.value as CollectionFrequency)}
+                            className="text-[11px] py-1 px-1.5 border border-slate-200 rounded bg-white text-slate-800"
+                          >
+                            <option value="daily">Daily</option>
+                            <option value="twice_daily">Twice Daily</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="hourly">Hourly</option>
+                          </select>
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px]">
+                          {src.last_checked
+                            ? new Date(src.last_checked).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              }) +
+                              ' (' +
+                              new Date(src.last_checked).toLocaleDateString() +
+                              ')'
+                            : 'Never'}
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-500">
+                          {src.next_scheduled_check
+                            ? new Date(src.next_scheduled_check).toLocaleDateString() +
+                              ' ' +
+                              new Date(src.next_scheduled_check).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })
+                            : 'On-demand'}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <button
+                            onClick={() => handleRunCollector(src.id)}
+                            disabled={runningSourceId === src.id}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-[11px] font-semibold border border-indigo-200 disabled:opacity-50"
+                          >
+                            <RefreshCw
+                              className={`w-3 h-3 ${runningSourceId === src.id ? 'animate-spin' : ''}`}
+                            />
+                            <span>{runningSourceId === src.id ? 'Checking...' : 'Check Now'}</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -559,12 +846,31 @@ export default function AdminDashboardPage() {
       {/* TAB 3: PIPELINE AUTOMATION RUNS */}
       {activeTab === 'pipeline' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h2 className="text-base font-bold text-slate-900">Scheduled Data Pipeline & Collection Logs</h2>
               <p className="text-xs text-slate-500">
-                Audit trail for automated opportunity extraction, URL validation, and normalization.
+                Audit trail for automated opportunity extraction, deduplication, URL validation, and normalization.
               </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowLogsModal(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-300 transition"
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>Audit Change Logs ({changeLogs.length})</span>
+              </button>
+
+              <button
+                onClick={handleRunAllDueSources}
+                disabled={runningAllSources}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs transition disabled:opacity-50"
+              >
+                <Play className={`w-3.5 h-3.5 ${runningAllSources ? 'animate-spin' : ''}`} />
+                <span>Trigger Manual Batch Run</span>
+              </button>
             </div>
           </div>
 
@@ -575,9 +881,12 @@ export default function AdminDashboardPage() {
                   <tr>
                     <th className="py-3 px-4">Source Name</th>
                     <th className="py-3 px-4">Timestamp</th>
-                    <th className="py-3 px-4">Discovered</th>
-                    <th className="py-3 px-4">New</th>
-                    <th className="py-3 px-4">Status</th>
+                    <th className="py-3 px-3">Discovered</th>
+                    <th className="py-3 px-3">Created</th>
+                    <th className="py-3 px-3">Updated</th>
+                    <th className="py-3 px-3">Skipped</th>
+                    <th className="py-3 px-3">Duration</th>
+                    <th className="py-3 px-3">Status</th>
                     <th className="py-3 px-4">Execution Summary</th>
                   </tr>
                 </thead>
@@ -589,14 +898,29 @@ export default function AdminDashboardPage() {
                         {new Date(run.started_at).toLocaleDateString()}{' '}
                         {new Date(run.started_at).toLocaleTimeString()}
                       </td>
-                      <td className="py-3 px-4 font-bold">{run.records_discovered}</td>
-                      <td className="py-3 px-4 text-emerald-600 font-bold">{run.records_created}</td>
-                      <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 uppercase">
+                      <td className="py-3 px-3 font-bold">{run.records_discovered}</td>
+                      <td className="py-3 px-3 text-emerald-600 font-bold">{run.records_created}</td>
+                      <td className="py-3 px-3 text-indigo-600 font-bold">{run.records_updated}</td>
+                      <td className="py-3 px-3 text-slate-400 font-medium">{run.records_skipped ?? 0}</td>
+                      <td className="py-3 px-3 font-mono text-[11px]">
+                        {run.duration_ms ? `${run.duration_ms}ms` : '< 1s'}
+                      </td>
+                      <td className="py-3 px-3">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            run.status === 'success'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : run.status === 'partial'
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                              : 'bg-rose-50 text-rose-700 border border-rose-200'
+                          }`}
+                        >
                           {run.status}
                         </span>
                       </td>
-                      <td className="py-3 px-4 max-w-sm text-slate-600 truncate">{run.error_summary}</td>
+                      <td className="py-3 px-4 max-w-xs text-slate-600 truncate" title={run.error_summary}>
+                        {run.error_summary}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1051,6 +1375,72 @@ export default function AdminDashboardPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: OPPORTUNITY CHANGE LOGS */}
+      {showLogsModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 text-slate-900 border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-base text-slate-900">Opportunity Audit & Revision Change Logs</h3>
+                <p className="text-xs text-slate-500">
+                  Material differences detected and updated by crawler pipeline vs existing database records.
+                </p>
+              </div>
+              <button onClick={() => setShowLogsModal(false)} className="p-1 text-slate-400 hover:text-slate-700">
+                ✕
+              </button>
+            </div>
+
+            {changeLogs.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-500 bg-slate-50 rounded-xl">
+                No material changes detected yet. Existing listings are synchronized with official sources.
+              </div>
+            ) : (
+              <div className="max-h-96 overflow-y-auto space-y-2">
+                {changeLogs.map((log) => (
+                  <div
+                    key={log.id}
+                    className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-[11px] font-bold text-indigo-700">
+                        Field: {log.fieldName}
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {new Date(log.changedAt).toLocaleString()} ({log.changeSource})
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px] pt-1 border-t border-slate-200/60">
+                      <div>
+                        <span className="text-slate-400 block text-[10px]">Previous Value:</span>
+                        <span className="text-rose-700 font-mono line-through">
+                          {String(log.oldValue || 'None')}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px]">Updated Value:</span>
+                        <span className="text-emerald-700 font-mono font-bold">
+                          {String(log.newValue || 'None')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="pt-2 flex justify-end border-t border-slate-100">
+              <button
+                onClick={() => setShowLogsModal(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-semibold text-slate-700"
+              >
+                Close Audit View
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -21,6 +21,8 @@ export type MonitoringMethod = 'API' | 'RSS' | 'HTML Scraping' | 'Manual Verific
 
 export type SourceStatus = 'active' | 'maintenance' | 'review_needed';
 
+export type CollectionFrequency = 'daily' | 'twice_daily' | 'weekly' | 'hourly';
+
 export interface Source {
   id: string;
   name: string;
@@ -32,6 +34,12 @@ export interface Source {
   last_checked: string;
   status: SourceStatus;
   verification_notes?: string;
+  enabled?: boolean;
+  collection_frequency?: CollectionFrequency;
+  last_successful_check?: string | null;
+  last_attempted_check?: string | null;
+  next_scheduled_check?: string | null;
+  last_error?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -135,6 +143,8 @@ export interface Internship {
   eligibility_verification_status?: EligibilityVerificationStatus;
   review_status?: ReviewStatus;
   verification_notes?: string;
+  canonical_url?: string;
+  data_fingerprint?: string;
   is_demo?: boolean;
   published_at?: string;
   last_verified_at?: string;
@@ -238,6 +248,9 @@ export interface CollectionRun {
   records_discovered: number;
   records_created: number;
   records_updated: number;
+  records_skipped?: number;
+  records_pending_review?: number;
+  duration_ms?: number;
   error_summary?: string;
 }
 
