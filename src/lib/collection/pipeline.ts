@@ -111,6 +111,30 @@ export async function executeSourceCollection(
                 runId,
               });
             }
+            if (existing.stipend_amount !== updated.stipend_amount) {
+              changeLogs.push({
+                id: 'log-' + Date.now() + '-stipend',
+                internshipId: existing.id,
+                fieldName: 'stipend_amount',
+                oldValue: existing.stipend_amount,
+                newValue: updated.stipend_amount,
+                changedAt: new Date().toISOString(),
+                changeSource: 'crawler',
+                runId,
+              });
+            }
+            if (existing.link_status !== updated.link_status) {
+              changeLogs.push({
+                id: 'log-' + Date.now() + '-link',
+                internshipId: existing.id,
+                fieldName: 'link_status',
+                oldValue: existing.link_status,
+                newValue: updated.link_status,
+                changedAt: new Date().toISOString(),
+                changeSource: 'crawler',
+                runId,
+              });
+            }
 
             updatedInternships.push(updated);
             updatedCount++;

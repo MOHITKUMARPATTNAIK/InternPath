@@ -165,7 +165,23 @@ export function checkDuplicateOpportunity(
   if (candidateCanonUrl) {
     const urlMatch = existingList.find((item) => {
       const itemCanon = canonicalizeUrl(item.official_application_url);
-      return itemCanon && itemCanon === candidateCanonUrl;
+      if (!itemCanon || itemCanon !== candidateCanonUrl) return false;
+
+      // Guard against generic root/portal URLs matching completely distinct departmental opportunities
+      try {
+        const parsed = new URL(itemCanon);
+        const isRootOrPortalBase = parsed.pathname === '/' || parsed.pathname === '';
+        if (isRootOrPortalBase) {
+          const sim = calculateTokenSimilarity(candidate.title, item.title);
+          if (sim < 0.3) {
+            return false;
+          }
+        }
+      } catch {
+        // Fall back to direct match
+      }
+
+      return true;
     });
 
     if (urlMatch) {

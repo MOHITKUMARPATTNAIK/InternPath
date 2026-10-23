@@ -279,6 +279,23 @@ async function runAllTests() {
     '10.2 Past cycle opportunity computes application_status = closed'
   );
 
+  const expiredCandidate = {
+    ...extracted[0],
+    applicationDeadline: '2025-01-01',
+    application_deadline: '2025-01-01',
+  };
+  const normExpired = await apiAdapter.normalizeOpportunity(expiredCandidate, testSource);
+  const expVal = await apiAdapter.validateOpportunity(normExpired);
+  const expDedup = await apiAdapter.checkDuplicate(normExpired, []);
+  const expVerify = await apiAdapter.verifyOpportunity(normExpired, testSource, {
+    fetcher: mockFetchOk as any,
+  });
+  const expDecision = await apiAdapter.publishOpportunity(normExpired, expVal, expDedup, expVerify);
+  assert(
+    expDecision.action === 'reject' && expDecision.publicationStatus === 'expired',
+    '10.3 Expired opportunity is strictly rejected from publication (action = reject, publicationStatus = expired)'
+  );
+
   // ---------------------------------------------------------------------------
   // TEST 11: Automatic Publication Rejection for Invalid Records
   // ---------------------------------------------------------------------------
@@ -304,7 +321,22 @@ async function runAllTests() {
   );
   assert(
     decision.action === 'reject' && decision.publicationStatus === 'draft',
-    '11. Sub-standard candidates are rejected from automated publication'
+    '11.1 Sub-standard candidates are rejected from automated publication'
+  );
+
+  // Test redirect to external unapproved domain
+  const externalRedirectFetcher = async (): Promise<Response> => {
+    return new Response('Found', {
+      status: 302,
+      headers: { location: 'https://external-suspicious-portal.com/apply' },
+    });
+  };
+  const redirectVerify = await apiAdapter.verifyOpportunity(normBrief, testSource, {
+    fetcher: externalRedirectFetcher as any,
+  });
+  assert(
+    !redirectVerify.isDomainApproved,
+    '11.2 Open redirect to external unapproved domain triggers domain mismatch (isDomainApproved = false)'
   );
 
   // ---------------------------------------------------------------------------

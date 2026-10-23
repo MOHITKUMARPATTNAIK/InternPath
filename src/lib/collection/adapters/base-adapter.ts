@@ -1,7 +1,7 @@
 import { Source, Internship } from '@/types';
 import { validateUrlSafety, checkLink } from '@/lib/link-validator';
 import { internshipSchema } from '@/lib/validations';
-import { getComputedApplicationStatus } from '@/lib/date-utils';
+import { getComputedApplicationStatus, isDeadlineExpired } from '@/lib/date-utils';
 import {
   SourceAdapter,
   CandidateOpportunity,
@@ -299,6 +299,26 @@ export abstract class BaseAdapter implements SourceAdapter {
       fetcher: options?.fetcher,
     });
 
+    // If redirected, verify that final destination also resides on an approved institutional host
+    if (linkCheck.finalUrl && linkCheck.finalUrl !== opportunity.official_application_url) {
+      try {
+        const finalHost = new URL(linkCheck.finalUrl).hostname.toLowerCase();
+        const sourceHost = source.official_domain.toLowerCase();
+        const isFinalApproved =
+          finalHost === sourceHost ||
+          finalHost.endsWith('.' + sourceHost) ||
+          sourceHost.endsWith('.' + finalHost);
+
+        if (!isFinalApproved) {
+          isDomainApproved = false;
+          isAuthenticSource = false;
+        }
+      } catch {
+        isDomainApproved = false;
+        isAuthenticSource = false;
+      }
+    }
+
     return {
       isAuthenticSource,
       linkStatus: linkCheck.status,
@@ -323,7 +343,7 @@ export abstract class BaseAdapter implements SourceAdapter {
   ): Promise<PublishingDecision> {
     const reasons: string[] = [];
 
-    // Critical validation errors -> REJECT
+    // 1. Critical validation errors -> REJECT
     if (!validation.isValid) {
       return {
         action: 'reject',
@@ -334,7 +354,23 @@ export abstract class BaseAdapter implements SourceAdapter {
       };
     }
 
-    // Duplicate handling
+    // 2. Expired opportunity check: an opportunity with an expired deadline must NEVER be published to the active catalog
+    if (
+      isDeadlineExpired(opportunity.application_deadline) ||
+      opportunity.application_status === 'closed'
+    ) {
+      return {
+        action: 'reject',
+        publicationStatus: 'expired',
+        reviewStatus: 'archived',
+        confidence: 90,
+        reasons: [
+          `Application deadline (${opportunity.application_deadline || 'unspecified'}) has passed in Indian Standard Time (Asia/Kolkata). Excluded from active publication.`,
+        ],
+      };
+    }
+
+    // 3. Duplicate handling
     if (dedup.isDuplicate) {
       if (dedup.matchType === 'fuzzy_title_org') {
         // Suspected duplicate via fuzzy matching with potential material difference -> queue for review
@@ -361,18 +397,18 @@ export abstract class BaseAdapter implements SourceAdapter {
       }
     }
 
-    // Link health check: broken or unreachable links must not be auto-published
-    if (verification.linkStatus === 'invalid_url' || verification.linkStatus === 'unreachable') {
+    // 4. Link health check: only verified working links or approved redirects may be auto-published
+    if (verification.linkStatus !== 'working' && verification.linkStatus !== 'redirected') {
       return {
         action: 'queue_for_review',
         publicationStatus: 'pending_review',
         reviewStatus: 'pending_review',
         confidence: 40,
-        reasons: [`Application link is ${verification.linkStatus}: ${verification.linkMessage}`],
+        reasons: [`Application link status is "${verification.linkStatus}": ${verification.linkMessage}`],
       };
     }
 
-    // Domain mismatch: candidate applying on external / third-party domain -> QUEUE FOR REVIEW
+    // 5. Domain mismatch: candidate applying on external / third-party domain -> QUEUE FOR REVIEW
     if (!verification.isDomainApproved) {
       return {
         action: 'queue_for_review',
@@ -380,7 +416,7 @@ export abstract class BaseAdapter implements SourceAdapter {
         reviewStatus: 'pending_review',
         confidence: 50,
         reasons: [
-          `Application destination does not strictly match approved institutional domain. Queued for human approval.`,
+          `Application destination host does not strictly match approved institutional domain (${opportunity.official_application_url}). Queued for administrative review.`,
         ],
       };
     }

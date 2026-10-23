@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
+import crypto from 'node:crypto';
 import { runSourceCheck, runAllDueSources } from '@/lib/data-service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
+
+function timingSafeCompare(a: string, b: string): boolean {
+  try {
+    const bufA = Buffer.from(a);
+    const bufB = Buffer.from(b);
+    if (bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Verify authorization for the cron / automation endpoint
@@ -19,7 +31,8 @@ function isAuthorized(request: NextRequest): boolean {
       ? authHeader.substring(7).trim()
       : null;
 
-    if (bearerToken === cronSecret || customHeader === cronSecret) {
+    const provided = bearerToken || customHeader;
+    if (provided && timingSafeCompare(provided, cronSecret)) {
       return true;
     }
     return false;

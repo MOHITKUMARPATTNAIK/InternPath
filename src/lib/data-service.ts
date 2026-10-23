@@ -693,6 +693,26 @@ export async function runSourceCheck(
 
   // 5. Persist change logs
   if (result.changeLogs.length > 0) {
+    if (isSupabaseConfigured()) {
+      const supabase = createClient();
+      if (supabase) {
+        for (const log of result.changeLogs) {
+          try {
+            await supabase.from('opportunity_change_logs').insert({
+              internship_id: log.internshipId,
+              field_name: log.fieldName,
+              old_value: log.oldValue !== undefined ? log.oldValue : null,
+              new_value: log.newValue !== undefined ? log.newValue : null,
+              changed_at: log.changedAt,
+              change_source: log.changeSource,
+              run_id: log.runId,
+            });
+          } catch {
+            // Non-blocking in case migration table is not migrated yet
+          }
+        }
+      }
+    }
     const existingLogs = getLocal<OpportunityChangeLog[]>(STORAGE_KEYS.CHANGE_LOGS, []);
     setLocal(STORAGE_KEYS.CHANGE_LOGS, [...result.changeLogs, ...existingLogs].slice(0, 500));
   }
@@ -895,6 +915,34 @@ export async function requestRecheckCandidate(candidateId: string): Promise<Inte
 }
 
 export async function getChangeLogs(internshipId?: string): Promise<OpportunityChangeLog[]> {
+  if (isSupabaseConfigured()) {
+    const supabase = createClient();
+    if (supabase) {
+      let query = supabase
+        .from('opportunity_change_logs')
+        .select('*')
+        .order('changed_at', { ascending: false });
+
+      if (internshipId) {
+        query = query.eq('internship_id', internshipId);
+      }
+
+      const { data, error } = await query;
+      if (!error && data && data.length > 0) {
+        return data.map((d: any) => ({
+          id: d.id,
+          internshipId: d.internship_id,
+          fieldName: d.field_name,
+          oldValue: d.old_value,
+          newValue: d.new_value,
+          changedAt: d.changed_at,
+          changeSource: d.change_source,
+          runId: d.run_id,
+        }));
+      }
+    }
+  }
+
   const logs = getLocal<OpportunityChangeLog[]>(STORAGE_KEYS.CHANGE_LOGS, []);
   if (!internshipId) return logs;
   return logs.filter((l) => l.internshipId === internshipId);
