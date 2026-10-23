@@ -14,9 +14,26 @@ export const signupSchema = z.object({
 export const userProfileSchema = z.object({
   display_name: z.string().min(2, 'Name is required'),
   college: z.string().optional(),
+  institution_type: z
+    .enum([
+      'iit',
+      'nit',
+      'iiit',
+      'iisc_iiser',
+      'central_university',
+      'state_university',
+      'private_university',
+      'medical_college',
+      'other',
+    ])
+    .optional(),
   degree: z.string().optional(),
   academic_year: z.string().optional(),
   academic_background: z.string().min(1, 'Please select your academic discipline'),
+  cgpa: z.number().min(0).max(10).nullable().optional(),
+  cgpa_scale: z.number().default(10).optional(),
+  class_12_percentage: z.number().min(0).max(100).nullable().optional(),
+  citizenship: z.string().default('Indian').optional(),
   primary_interest: z.string().min(2, 'Please specify your primary area of interest'),
   secondary_interests: z.array(z.string()).default([]),
   skills: z.array(z.string()).default([]),
@@ -83,7 +100,34 @@ export const internshipSchema = z.object({
   benefits: z.array(z.string()).default([]),
   official_application_url: z.string().url('Must be a valid official application URL'),
   original_source_url: z.string().url('Must be a valid source URL'),
+  url_type: z.enum(['direct_application', 'official_source', 'general_homepage', 'third_party_portal']).optional(),
+  link_status: z
+    .enum([
+      'working',
+      'redirected',
+      'temporarily_unavailable',
+      'unreachable',
+      'access_restricted',
+      'needs_manual_verification',
+      'invalid_url',
+    ])
+    .default('working'),
+  min_cgpa: z.number().nullable().optional(),
+  cgpa_scale: z.number().default(10).optional(),
+  min_percentage: z.number().nullable().optional(),
+  eligible_degrees: z.array(z.string()).default([]),
+  institution_restrictions: z.array(z.string()).default([]),
+  citizenship_required: z.array(z.string()).default(['Indian']),
+  requires_noc: z.boolean().default(false),
+  requires_nomination: z.boolean().default(false),
+  prerequisites_description: z.string().optional(),
+  application_status: z
+    .enum(['upcoming', 'open', 'closing_soon', 'closed', 'status_unconfirmed'])
+    .default('open'),
   publication_status: z.enum(['draft', 'pending_review', 'published', 'expired', 'archived']),
-  verification_status: z.enum(['official_verified', 'source_checked', 'pending_verification']),
+  verification_status: z.enum(['official_verified', 'source_checked', 'pending_verification', 'unverified']),
+  eligibility_verification_status: z.enum(['verified', 'partial', 'unconfirmed']).default('verified'),
+  review_status: z.enum(['approved', 'pending_review', 'flagged', 'archived']).default('approved'),
+  verification_notes: z.string().optional(),
   is_demo: z.boolean().default(false),
 });

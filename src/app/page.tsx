@@ -3,8 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Internship } from '@/types';
-import { getInternships, getRecommendedInternships, ScoredInternship } from '@/lib/data-service';
+import { Internship, ScoredInternship } from '@/types';
+import { getInternships, getRecommendedInternships } from '@/lib/data-service';
 import { useAuth } from '@/lib/auth-context';
 import { InternshipCard } from '@/components/internships/InternshipCard';
 import {
@@ -217,11 +217,12 @@ export default function HomePage() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-6">
-              {recommended.map(({ internship, matchReasons }) => (
+              {recommended.map(({ internship, evaluation, matchReasons }) => (
                 <InternshipCard
                   key={internship.id}
                   internship={internship}
-                  highlightReason={matchReasons[0]}
+                  highlightReason={matchReasons?.[0]}
+                  evaluation={evaluation}
                 />
               ))}
             </div>

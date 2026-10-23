@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { Internship, Source, PersonalApplicationStatus } from '@/types';
 import { getInternshipById, getSourceById, saveInternship, getSavedInternships, unsaveInternship } from '@/lib/data-service';
 import { useAuth } from '@/lib/auth-context';
+import { evaluateEligibility } from '@/lib/eligibility-engine';
 import { VerificationBadge } from '@/components/ui/VerificationBadge';
 import { ReportModal } from '@/components/internships/ReportModal';
 import {
@@ -16,6 +17,11 @@ import {
   IndianRupee,
   FileText,
   CheckCircle,
+  CheckCircle2,
+  AlertCircle,
+  AlertTriangle,
+  HelpCircle,
+  XCircle,
   ExternalLink,
   ArrowLeft,
   Bookmark,
@@ -24,11 +30,12 @@ import {
   ShieldCheck,
   GraduationCap,
   Share2,
+  Info,
 } from 'lucide-react';
 
 export default function InternshipDetailPage() {
   const params = useParams();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const internshipId = params.id as string;
 
   const [internship, setInternship] = useState<Internship | null>(null);
@@ -130,6 +137,8 @@ export default function InternshipDetailPage() {
       )
     : null;
 
+  const evaluation = evaluateEligibility(internship, profile);
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* Back button & Breadcrumbs */}
@@ -175,6 +184,16 @@ export default function InternshipDetailPage() {
               <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-700 capitalize">
                 Format: {internship.format}
               </span>
+              {internship.application_status === 'upcoming' && (
+                <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-sky-50 text-sky-700 border border-sky-200">
+                  Applications Opening Soon
+                </span>
+              )}
+              {internship.application_status === 'closing_soon' && (
+                <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200 animate-pulse">
+                  Closing Soon
+                </span>
+              )}
               {internship.is_demo && (
                 <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200">
                   Demo Seed Record
@@ -231,6 +250,58 @@ export default function InternshipDetailPage() {
             </button>
           </div>
         </div>
+
+        {/* Link Health Advisory Banner (if not regular working) */}
+        {internship.link_status !== 'working' && (
+          <div
+            className={`p-4 rounded-xl border text-xs flex items-start gap-3 ${
+              internship.link_status === 'unreachable'
+                ? 'bg-amber-50/90 border-amber-200 text-amber-900'
+                : internship.link_status === 'temporarily_unavailable'
+                ? 'bg-sky-50 border-sky-200 text-sky-900'
+                : internship.link_status === 'redirected'
+                ? 'bg-indigo-50/70 border-indigo-200 text-indigo-900'
+                : 'bg-slate-50 border-slate-200 text-slate-800'
+            }`}
+          >
+            <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <div className="font-bold flex items-center gap-1.5">
+                <span>
+                  Portal Status Note:{' '}
+                  {internship.link_status === 'unreachable'
+                    ? 'Subdomain Available Only During Intake Window'
+                    : internship.link_status === 'temporarily_unavailable'
+                    ? 'Institutional Server Temporarily Slow or Timed Out'
+                    : internship.link_status === 'needs_manual_verification'
+                    ? 'Government NIC Portal (Manual Browser Confirmation)'
+                    : 'Redirected to Seasonal Portal'}
+                </span>
+              </div>
+              <p className="leading-relaxed text-[11px]">
+                {internship.link_check_message ||
+                  'The application link was audited by our verification engine. Please verify using the official source notice link below if direct access is delayed.'}
+              </p>
+              <div className="pt-1 flex flex-wrap items-center gap-3 text-[11px]">
+                <a
+                  href={internship.original_source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold underline flex items-center gap-1 text-indigo-700 hover:text-indigo-900"
+                >
+                  <span>Open Official Guidelines / Notification</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+                <button
+                  onClick={() => setReportModalOpen(true)}
+                  className="font-semibold text-rose-600 hover:underline"
+                >
+                  Report Broken Link
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Quick Highlights Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2 text-xs">
@@ -307,6 +378,120 @@ export default function InternshipDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column (Details) */}
         <div className="lg:col-span-2 space-y-6">
+          {/* Personalized Student Eligibility Evaluation Card */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
+              <div className="flex items-center gap-2">
+                <GraduationCap className="w-5 h-5 text-indigo-600" />
+                <h2 className="text-base font-bold text-slate-900">Your Eligibility Evaluation</h2>
+              </div>
+
+              {/* Distinct Status Pill */}
+              {evaluation.isEligible && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <span>Eligible</span>
+                </span>
+              )}
+              {evaluation.isPotentialMatch && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300">
+                  <AlertCircle className="w-4 h-4 text-amber-600" />
+                  <span>Potential Match — Check Requirements</span>
+                </span>
+              )}
+              {evaluation.isNotEligible && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-300">
+                  <XCircle className="w-4 h-4 text-rose-600" />
+                  <span>Not Eligible</span>
+                </span>
+              )}
+              {evaluation.isUnknown && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                  <HelpCircle className="w-4 h-4 text-slate-500" />
+                  <span>Eligibility Unknown</span>
+                </span>
+              )}
+            </div>
+
+            {/* Interest & Field Alignment */}
+            <div className="text-xs text-slate-700 bg-slate-50 p-3.5 rounded-xl border border-slate-100">
+              <span className="font-semibold text-slate-900">Relevance & Academic Discipline: </span>
+              <span>{evaluation.interestMatchReason}</span>
+            </div>
+
+            {/* Detailed Criteria Checklist */}
+            <div className="space-y-3 text-xs">
+              {/* Checked & Satisfied Criteria */}
+              {evaluation.matchedCriteria.length > 0 && (
+                <div className="space-y-1.5">
+                  <span className="font-semibold text-emerald-800 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                    <span>Verified Matching Criteria ({evaluation.matchedCriteria.length})</span>
+                  </span>
+                  <ul className="space-y-1 pl-6 list-disc text-slate-700 text-[11px]">
+                    {evaluation.matchedCriteria.map((c, i) => (
+                      <li key={i}>{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Unconfirmed Mandatory Criteria */}
+              {evaluation.unconfirmedCriteria.length > 0 && (
+                <div className="space-y-1.5 bg-amber-50/80 p-3.5 rounded-xl border border-amber-200">
+                  <span className="font-semibold text-amber-900 flex items-center gap-1.5">
+                    <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                    <span>Unconfirmed Requirements — Verify Before Applying</span>
+                  </span>
+                  <ul className="space-y-1 pl-6 list-disc text-amber-900 text-[11px]">
+                    {evaluation.unconfirmedCriteria.map((c, i) => (
+                      <li key={i}>{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Conflicting Criteria (If any) */}
+              {evaluation.conflictingCriteria.length > 0 && (
+                <div className="space-y-1.5 bg-rose-50 p-3.5 rounded-xl border border-rose-200">
+                  <span className="font-semibold text-rose-900 flex items-center gap-1.5">
+                    <XCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+                    <span>Definitive Conflicting Criteria</span>
+                  </span>
+                  <ul className="space-y-1 pl-6 list-disc text-rose-900 text-[11px]">
+                    {evaluation.conflictingCriteria.map((c, i) => (
+                      <li key={i}>{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Missing Profile Information Alert */}
+              {evaluation.profileMissingFields.length > 0 && (
+                <div className="p-3.5 bg-indigo-50/80 border border-indigo-100 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                  <div className="text-indigo-900 leading-relaxed">
+                    <strong>Improve Eligibility Precision:</strong> Complete missing fields in your profile (
+                    {evaluation.profileMissingFields.join(', ')}) to unlock confirmed matches.
+                  </div>
+                  <Link
+                    href="/profile"
+                    className="px-3.5 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold hover:bg-indigo-700 transition flex-shrink-0 text-center"
+                  >
+                    Update Profile
+                  </Link>
+                </div>
+              )}
+            </div>
+
+            {/* Official Authority Reminder */}
+            <div className="text-[11px] text-slate-500 pt-2 border-t border-slate-100 flex items-center gap-1.5">
+              <Info className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+              <span>
+                The official application page remains the final authority on intake qualifications and seat limits.
+              </span>
+            </div>
+          </div>
+
           {/* Detailed Description */}
           <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-3 shadow-xs">
             <h2 className="text-base font-bold text-slate-900">About the Opportunity</h2>
@@ -319,10 +504,10 @@ export default function InternshipDetailPage() {
           <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 shadow-xs">
             <div className="flex items-center gap-2">
               <GraduationCap className="w-5 h-5 text-indigo-600" />
-              <h2 className="text-base font-bold text-slate-900">Eligibility Criteria</h2>
+              <h2 className="text-base font-bold text-slate-900">Official Eligibility Specifications</h2>
             </div>
 
-            <div className="space-y-3 text-xs">
+            <div className="space-y-3.5 text-xs">
               <div>
                 <span className="font-semibold text-slate-700">Eligible Academic Disciplines:</span>
                 <div className="flex flex-wrap gap-1.5 mt-1.5">
@@ -337,19 +522,86 @@ export default function InternshipDetailPage() {
                 </div>
               </div>
 
-              <div>
-                <span className="font-semibold text-slate-700">Minimum Education Level:</span>
-                <p className="text-slate-600 mt-0.5">{internship.min_education_level}</p>
+              {internship.eligible_degrees && internship.eligible_degrees.length > 0 && (
+                <div>
+                  <span className="font-semibold text-slate-700">Eligible Degree Courses:</span>
+                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                    {internship.eligible_degrees.map((deg) => (
+                      <span
+                        key={deg}
+                        className="px-2 py-0.5 rounded bg-slate-100 text-slate-800 text-[11px] font-medium border border-slate-200"
+                      >
+                        {deg}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div>
+                  <span className="font-semibold text-slate-700 block">Minimum Education Level:</span>
+                  <p className="text-slate-600 mt-0.5">{internship.min_education_level}</p>
+                </div>
+
+                <div>
+                  <span className="font-semibold text-slate-700 block">Eligible Undergraduate Years:</span>
+                  <p className="text-slate-600 mt-0.5">
+                    {internship.eligible_years && internship.eligible_years.length > 0
+                      ? internship.eligible_years.join(', ')
+                      : 'Open to all enrolled undergraduate students'}
+                  </p>
+                </div>
+
+                {internship.min_cgpa && (
+                  <div>
+                    <span className="font-semibold text-slate-700 block">Minimum CGPA Required:</span>
+                    <p className="text-slate-800 font-semibold mt-0.5">
+                      {internship.min_cgpa} / {internship.cgpa_scale || 10}
+                    </p>
+                  </div>
+                )}
+
+                {internship.min_percentage && (
+                  <div>
+                    <span className="font-semibold text-slate-700 block">Class 12th Board Cutoff:</span>
+                    <p className="text-slate-800 font-semibold mt-0.5">
+                      {internship.min_percentage}% or higher
+                    </p>
+                  </div>
+                )}
               </div>
 
-              <div>
-                <span className="font-semibold text-slate-700">Eligible Undergraduate Years:</span>
-                <p className="text-slate-600 mt-0.5">
-                  {internship.eligible_years && internship.eligible_years.length > 0
-                    ? internship.eligible_years.join(', ')
-                    : 'Open to all enrolled undergraduate students'}
-                </p>
-              </div>
+              {internship.institution_restrictions && internship.institution_restrictions.length > 0 && (
+                <div>
+                  <span className="font-semibold text-slate-700">Institution Restrictions:</span>
+                  <div className="mt-1 text-slate-700 bg-slate-50 p-2.5 rounded-lg border border-slate-200 text-[11px]">
+                    {internship.institution_restrictions.includes('non_iit_only') && (
+                      <span className="text-amber-800 font-semibold">
+                        Strictly reserved for students enrolled in institutions outside IITs (non-IIT only).
+                      </span>
+                    )}
+                    {internship.institution_restrictions.includes('medical_college_only') && (
+                      <span className="text-amber-800 font-semibold">
+                        Strictly restricted to students enrolled in recognized Medical/Dental colleges.
+                      </span>
+                    )}
+                    {internship.institution_restrictions.includes('domestic_only') && (
+                      <span className="text-slate-700">Open to students studying in recognized domestic universities in India.</span>
+                    )}
+                    {internship.institution_restrictions.includes('open_all') && (
+                      <span className="text-slate-700">Open to recognized universities and colleges pan-India.</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {internship.prerequisites_description && (
+                <div>
+                  <span className="font-semibold text-slate-700">Prerequisite Details:</span>
+                  <p className="text-slate-600 mt-0.5 leading-relaxed">{internship.prerequisites_description}</p>
+                </div>
+              )}
 
               {internship.required_skills && internship.required_skills.length > 0 && (
                 <div>
@@ -542,29 +794,69 @@ export default function InternshipDetailPage() {
               </p>
             </div>
 
+            {/* Health Advisory if link has caveats */}
+            {internship.link_status !== 'working' && (
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 space-y-1">
+                <div className="font-bold flex items-center gap-1">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                  <span>Important Link Health Note:</span>
+                </div>
+                <p className="text-[11px] leading-relaxed">
+                  {internship.link_check_message ||
+                    'This institutional portal link may require an active intake session, campus network, or browser certificate confirmation.'}
+                </p>
+                {internship.original_source_url && (
+                  <p className="text-[11px] pt-1 font-medium">
+                    Alternatively, view the{' '}
+                    <a
+                      href={internship.original_source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-indigo-700 underline font-semibold"
+                    >
+                      Official Source Notice
+                    </a>{' '}
+                    first.
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="text-xs text-slate-500 leading-relaxed">
               <strong className="text-slate-700">Important:</strong> The selection, shortlisting, and application
               processing are handled exclusively by the hosting institution. InternPath does not process applications or
               charge any fees.
             </div>
 
-            <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+            <div className="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100">
               <button
-                onClick={() => setShowApplyWarning(false)}
-                className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                onClick={() => {
+                  setShowApplyWarning(false);
+                  setReportModalOpen(true);
+                }}
+                className="text-[11px] text-rose-600 hover:underline font-medium"
               >
-                Cancel
+                Link Not Opening? Report Issue
               </button>
-              <a
-                href={internship.official_application_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setShowApplyWarning(false)}
-                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5"
-              >
-                <span>Continue to Official Website</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowApplyWarning(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <a
+                  href={internship.official_application_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setShowApplyWarning(false)}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs flex items-center gap-1.5"
+                >
+                  <span>Continue to Official Website</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
             </div>
           </div>
         </div>

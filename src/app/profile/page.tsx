@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth-context';
-import { UserProfile } from '@/types';
+import { UserProfile, InstitutionType } from '@/types';
 import { getRecommendedInternships, ScoredInternship } from '@/lib/data-service';
 import { InternshipCard } from '@/components/internships/InternshipCard';
 import { DISCIPLINES, YEARS } from '@/components/internships/InternshipFilters';
@@ -25,9 +25,14 @@ export default function ProfilePage() {
   const [formData, setFormData] = useState<Partial<UserProfile>>({
     display_name: '',
     college: '',
+    institution_type: 'other',
     degree: '',
     academic_year: '3rd Year',
     academic_background: 'Engineering and Technology',
+    cgpa: null,
+    cgpa_scale: 10,
+    class_12_percentage: null,
+    citizenship: 'Indian',
     primary_interest: '',
     secondary_interests: [],
     skills: [],
@@ -254,6 +259,111 @@ export default function ProfilePage() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Institution Category / Type</label>
+                <select
+                  value={formData.institution_type || 'other'}
+                  onChange={(e) =>
+                    setFormData({ ...formData, institution_type: e.target.value as InstitutionType })
+                  }
+                  className="w-full py-2 px-3 border border-slate-200 rounded-lg bg-white text-slate-800 focus:ring-1 focus:ring-indigo-500"
+                >
+                  <option value="iit">IIT (Indian Institute of Technology)</option>
+                  <option value="nit">NIT (National Institute of Technology)</option>
+                  <option value="iiit">IIIT</option>
+                  <option value="iisc_iiser">IISc / IISER / NISER</option>
+                  <option value="central_university">Central University</option>
+                  <option value="state_university">State Govt University</option>
+                  <option value="private_university">Private / Deemed University</option>
+                  <option value="medical_college">Recognized Medical / Dental College</option>
+                  <option value="other">Other Autonomous College</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Cumulative CGPA</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="10"
+                    value={formData.cgpa !== null && formData.cgpa !== undefined ? formData.cgpa : ''}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        cgpa: e.target.value ? parseFloat(e.target.value) : null,
+                      })
+                    }
+                    placeholder="e.g. 8.4"
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800 focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">CGPA Scale</label>
+                  <select
+                    value={formData.cgpa_scale || 10}
+                    onChange={(e) =>
+                      setFormData({ ...formData, cgpa_scale: parseInt(e.target.value, 10) })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg bg-white text-slate-800 focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value={10}>10.0 Scale</option>
+                    <option value={4}>4.0 Scale</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Class 12th Board Marks (%)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  max="100"
+                  value={
+                    formData.class_12_percentage !== null && formData.class_12_percentage !== undefined
+                      ? formData.class_12_percentage
+                      : ''
+                  }
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      class_12_percentage: e.target.value ? parseFloat(e.target.value) : null,
+                    })
+                  }
+                  placeholder="e.g. 88.5"
+                  className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800 focus:ring-1 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Citizenship</label>
+                <select
+                  value={formData.citizenship || 'Indian'}
+                  onChange={(e) => setFormData({ ...formData, citizenship: e.target.value })}
+                  className="w-full py-2 px-3 border border-slate-200 rounded-lg bg-white text-slate-800 focus:ring-1 focus:ring-indigo-500"
+                >
+                  <option value="Indian">Indian Citizen</option>
+                  <option value="Other">International / Overseas</option>
+                </select>
+              </div>
+
+              {/* Eligibility Completeness Guide */}
+              <div className="sm:col-span-2 p-3 bg-amber-50/70 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1">
+                <span className="font-bold flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                  <span>Why provide CGPA, College Category & 12th Board marks?</span>
+                </span>
+                <p className="text-[11px] leading-relaxed">
+                  Indian institutions enforce strict statutory eligibility criteria. For example,{' '}
+                  <strong>NITI Aayog requires &gt;= 85% in Class 12</strong>,{' '}
+                  <strong>IIT Roorkee SPARK requires CGPA &gt;= 7.5 (8.0 for non-IIT/NIT)</strong>, and{' '}
+                  <strong>IIT Madras SFP explicitly reserves spots for non-IIT students</strong>. Providing this
+                  data unlocks fully verified &ldquo;Eligible&rdquo; badges.
+                </p>
               </div>
 
               <div className="sm:col-span-2">
@@ -495,11 +605,12 @@ export default function ProfilePage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {recommended.map(({ internship, matchReasons }) => (
+              {recommended.map(({ internship, evaluation, matchReasons }) => (
                 <InternshipCard
                   key={internship.id}
                   internship={internship}
-                  highlightReason={matchReasons[0]}
+                  highlightReason={matchReasons?.[0]}
+                  evaluation={evaluation}
                 />
               ))}
             </div>

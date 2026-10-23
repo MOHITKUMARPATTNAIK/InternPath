@@ -7,9 +7,15 @@ import {
   FilterState,
   UserProfile,
   PersonalApplicationStatus,
+  ScoredInternship,
+  EligibilityEvaluation,
+  LinkStatus,
 } from '@/types';
 import { INITIAL_SOURCES, INITIAL_INTERNSHIPS, INITIAL_COLLECTION_RUNS } from '@/data/seedData';
 import { createClient, isSupabaseConfigured } from './supabase/client';
+import { evaluateEligibility } from './eligibility-engine';
+import { getComputedApplicationStatus, isDeadlineClosingSoon, isDeadlineExpired } from './date-utils';
+import { validateApplicationUrl } from './link-validator';
 
 const STORAGE_KEYS = {
   SOURCES: 'internpath_sources',
@@ -140,6 +146,12 @@ export async function getInternships(filters?: Partial<FilterState>): Promise<In
     list = getLocal<Internship[]>(STORAGE_KEYS.INTERNSHIPS, INITIAL_INTERNSHIPS);
   }
 
+  // Ensure application_status is computed dynamically using Indian Standard Time
+  list = list.map((item) => ({
+    ...item,
+    application_status: getComputedApplicationStatus(item),
+  }));
+
   // Filter application
   if (!filters) return list;
 
@@ -165,31 +177,45 @@ export async function getInternships(filters?: Partial<FilterState>): Promise<In
       if (!hasDiscipline) return false;
     }
 
-    // 3. Stipend Status
+    // 3. Source Category
+    if (filters.sourceCategory && filters.sourceCategory !== 'all') {
+      const cat = filters.sourceCategory.toLowerCase();
+      const matchSource =
+        (item.source_id && item.source_id.toLowerCase().includes(cat)) ||
+        item.organization.toLowerCase().includes(cat);
+      if (!matchSource) return false;
+    }
+
+    // 4. Application Status
+    if (filters.applicationStatus && filters.applicationStatus !== 'all') {
+      if (item.application_status !== filters.applicationStatus) return false;
+    }
+
+    // 5. Stipend Status
     if (filters.stipendStatus && filters.stipendStatus !== 'all') {
       if (item.stipend_status !== filters.stipendStatus) return false;
     }
 
-    // 4. Minimum Stipend
+    // 6. Minimum Stipend
     if (filters.minStipend !== undefined && filters.minStipend !== null && filters.minStipend > 0) {
       if (!item.stipend_amount || item.stipend_amount < filters.minStipend) {
         return false;
       }
     }
 
-    // 5. Format (Remote, Onsite, Hybrid)
+    // 7. Format (Remote, Onsite, Hybrid)
     if (filters.format && filters.format !== 'all') {
       if (item.format !== filters.format.toLowerCase()) return false;
     }
 
-    // 6. Location
+    // 8. Location
     if (filters.location && filters.location !== 'all') {
       if (!item.location.toLowerCase().includes(filters.location.toLowerCase())) {
         return false;
       }
     }
 
-    // 7. Eligible Year
+    // 9. Eligible Year
     if (filters.year && filters.year !== 'all') {
       const yearMatch = item.eligible_years?.some((y) =>
         y.toLowerCase().includes(filters.year?.toLowerCase() || '')
@@ -197,19 +223,18 @@ export async function getInternships(filters?: Partial<FilterState>): Promise<In
       if (!yearMatch) return false;
     }
 
-    // 8. Deadline Filter
+    // 10. Deadline Filter (Timezone aware)
     if (filters.deadlineFilter && filters.deadlineFilter !== 'all') {
-      if (!item.application_deadline) return true;
-      const deadlineDate = new Date(item.application_deadline).getTime();
-      const now = new Date().getTime();
-      const daysDiff = (deadlineDate - now) / (1000 * 60 * 60 * 24);
-
-      if (filters.deadlineFilter === '7days' && (daysDiff < 0 || daysDiff > 7)) return false;
-      if (filters.deadlineFilter === '30days' && (daysDiff < 0 || daysDiff > 30)) return false;
-      if (filters.deadlineFilter === 'active' && daysDiff < 0) return false;
+      if (filters.deadlineFilter === 'active') {
+        if (isDeadlineExpired(item.application_deadline)) return false;
+      } else if (filters.deadlineFilter === '7days') {
+        if (!isDeadlineClosingSoon(item.application_deadline, 7)) return false;
+      } else if (filters.deadlineFilter === '30days') {
+        if (!isDeadlineClosingSoon(item.application_deadline, 30)) return false;
+      }
     }
 
-    // 9. Duration
+    // 11. Duration
     if (filters.duration && filters.duration !== 'all') {
       if (!item.duration.toLowerCase().includes(filters.duration.toLowerCase())) return false;
     }
@@ -390,105 +415,103 @@ export async function updateSavedStatus(
 // ------------------------------------------------------------------------------
 // STUDENT RECOMMENDATION ENGINE (Strict Eligibility First)
 // ------------------------------------------------------------------------------
-export interface ScoredInternship {
-  internship: Internship;
-  score: number;
-  matchReasons: string[];
-}
+export type { ScoredInternship };
 
 export async function getRecommendedInternships(profile: UserProfile): Promise<ScoredInternship[]> {
   const allInternships = await getInternships();
 
-  const scored: ScoredInternship[] = [];
+  const results: ScoredInternship[] = [];
 
   for (const item of allInternships) {
-    let score = 0;
-    const matchReasons: string[] = [];
+    const evaluation = evaluateEligibility(item, profile);
 
-    // 1. Mandatory Academic Background Check
-    // Must strictly match student's declared academic background unless opportunity is explicitly open to all disciplines
-    const backgroundMatches =
-      item.eligible_disciplines.length === 0 ||
-      item.eligible_disciplines.some((disc) =>
-        disc.toLowerCase().includes(profile.academic_background.toLowerCase()) ||
-        profile.academic_background.toLowerCase().includes(disc.toLowerCase()) ||
-        disc.toLowerCase() === 'all disciplines'
-      );
-
-    if (!backgroundMatches) {
-      // Strictly disqualify unrelated opportunities (e.g., medical student receiving computer science internships)
+    // If an opportunity has conflicting mandatory requirements, exclude it from top recommendations
+    if (evaluation.isNotEligible) {
       continue;
     }
 
-    score += 40;
-    matchReasons.push(`Directly matches your field (${profile.academic_background})`);
+    const reasons = [
+      ...evaluation.matchedCriteria,
+      ...evaluation.unconfirmedCriteria.map((c) => `Verify: ${c}`),
+    ];
 
-    // 2. Academic Year Match
-    if (profile.academic_year && item.eligible_years.length > 0) {
-      const yearMatches = item.eligible_years.some((y) =>
-        y.toLowerCase().includes(profile.academic_year?.toLowerCase() || '')
-      );
-      if (yearMatches) {
-        score += 25;
-        matchReasons.push(`Open to ${profile.academic_year} undergraduates`);
-      }
-    }
-
-    // 3. Skills Match
-    if (profile.skills && profile.skills.length > 0 && item.required_skills) {
-      const matchedSkills = item.required_skills.filter((reqSkill) =>
-        profile.skills.some((userSkill) =>
-          reqSkill.toLowerCase().includes(userSkill.toLowerCase()) ||
-          userSkill.toLowerCase().includes(reqSkill.toLowerCase())
-        )
-      );
-      if (matchedSkills.length > 0) {
-        score += Math.min(matchedSkills.length * 10, 30);
-        matchReasons.push(`Matches your skills: ${matchedSkills.slice(0, 3).join(', ')}`);
-      }
-    }
-
-    // 4. Primary & Secondary Interest Match
-    if (profile.primary_interest) {
-      const pInterest = profile.primary_interest.toLowerCase();
-      const inTitle = item.title.toLowerCase().includes(pInterest);
-      const inDesc = item.description.toLowerCase().includes(pInterest);
-      const inDept = item.department?.toLowerCase().includes(pInterest);
-      if (inTitle || inDesc || inDept) {
-        score += 20;
-        matchReasons.push(`Aligns with your primary interest in ${profile.primary_interest}`);
-      }
-    }
-
-    // 5. Work Format Preference
-    if (profile.preferred_format && profile.preferred_format !== 'Any') {
-      if (item.format.toLowerCase() === profile.preferred_format.toLowerCase()) {
-        score += 15;
-        matchReasons.push(`Preferred format: ${item.format.toUpperCase()}`);
-      }
-    } else {
-      score += 5;
-    }
-
-    // 6. Stipend Preference
-    if (profile.min_stipend_preference && profile.min_stipend_preference > 0) {
-      if (item.stipend_amount && item.stipend_amount >= profile.min_stipend_preference) {
-        score += 10;
-        matchReasons.push(`Stipend meets your preference (₹${item.stipend_amount.toLocaleString()})`);
-      }
-    }
-
-    // Only include if baseline threshold is satisfied
-    if (score >= 35) {
-      scored.push({
-        internship: item,
-        score,
-        matchReasons,
-      });
-    }
+    results.push({
+      internship: item,
+      evaluation,
+      score: evaluation.score,
+      matchReasons: reasons.length > 0 ? reasons : [evaluation.interestMatchReason],
+    });
   }
 
-  return scored.sort((a, b) => b.score - a.score);
+  // Priority sorting:
+  // 1. Fully Eligible matches (highest score first)
+  // 2. Potential Matches (highest score first)
+  // 3. Unknown / Profile Incomplete
+  return results.sort((a, b) => {
+    const priority = (evalObj: EligibilityEvaluation) => {
+      if (evalObj.isEligible) return 3;
+      if (evalObj.isPotentialMatch) return 2;
+      if (evalObj.isUnknown) return 1;
+      return 0;
+    };
+
+    const diffPriority = priority(b.evaluation) - priority(a.evaluation);
+    if (diffPriority !== 0) return diffPriority;
+    return b.score - a.score;
+  });
+}
+
+// ------------------------------------------------------------------------------
+// LINK VALIDATION RUNNERS
+// ------------------------------------------------------------------------------
+export async function validateAndUpdateInternshipLink(internshipId: string): Promise<Internship | null> {
+  const item = await getInternshipById(internshipId);
+  if (!item) return null;
+
+  const checkResult = await validateApplicationUrl(item.official_application_url);
+  const updates: Partial<Internship> = {
+    link_status: checkResult.status,
+    last_link_checked_at: checkResult.checked_at,
+    last_http_status: checkResult.http_status,
+    final_url: checkResult.final_url,
+    link_check_message:
+      checkResult.error_message ||
+      (checkResult.status === 'working' ? 'Validated successfully (HTTP 200).' : checkResult.status),
+  };
+
+  return updateInternship(internshipId, updates);
+}
+
+export async function validateAllInternshipLinks(): Promise<{
+  total: number;
+  updated: number;
+  details: Array<{ id: string; title: string; link_status: LinkStatus; message: string }>;
+}> {
+  const internships = await getInternships();
+  const details: Array<{ id: string; title: string; link_status: LinkStatus; message: string }> = [];
+
+  for (const item of internships) {
+    const checkResult = await validateApplicationUrl(item.official_application_url);
+    await updateInternship(item.id, {
+      link_status: checkResult.status,
+      last_link_checked_at: checkResult.checked_at,
+      last_http_status: checkResult.http_status,
+      final_url: checkResult.final_url,
+      link_check_message: checkResult.error_message || 'Validated successfully.',
+    });
+    details.push({
+      id: item.id,
+      title: item.title,
+      link_status: checkResult.status,
+      message: checkResult.error_message || 'OK',
+    });
+  }
+
+  return {
+    total: internships.length,
+    updated: details.length,
+    details,
+  };
 }
 
 // ------------------------------------------------------------------------------

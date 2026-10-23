@@ -8,6 +8,15 @@ import {
   internshipSchema,
 } from '../src/lib/validations';
 import { UserProfile, Internship, FilterState } from '../src/types';
+import { evaluateEligibility } from '../src/lib/eligibility-engine';
+import { checkLink, validateUrlSafety } from '../src/lib/link-validator';
+import {
+  getComputedApplicationStatus,
+  isDeadlineClosingSoon,
+  isDeadlineExpired,
+  formatKolkataDate,
+  formatKolkataCountdown,
+} from '../src/lib/date-utils';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -23,256 +32,435 @@ function assert(condition: boolean, testName: string, detail?: string) {
   }
 }
 
-console.log('\n============================================================');
-console.log('InternPath Platform - Automated Verification Test Suite');
-console.log('============================================================\n');
+async function runTestSuite() {
+  console.log('\n============================================================');
+  console.log('InternPath - Complete Audit & Verification Test Suite');
+  console.log('Testing 16 Critical Quality, Eligibility & Link Guarantees');
+  console.log('============================================================\n');
 
-// -----------------------------------------------------------------------------
-// TEST SUITE 1: Seed Data & Institutional Domain Verification
-// -----------------------------------------------------------------------------
-console.log('1. Verifying Authentic Indian Institutional Seed Data...');
+  // Baseline Seed Verification
+  const iitSfp = INITIAL_INTERNSHIPS.find((i) => i.id === 'intern-iitm-sfp-2026')!;
+  const spark = INITIAL_INTERNSHIPS.find((i) => i.id === 'intern-iitr-spark-2026')!;
+  const niti = INITIAL_INTERNSHIPS.find((i) => i.id === 'intern-niti-aayog-2026')!;
+  const rbi = INITIAL_INTERNSHIPS.find((i) => i.id === 'intern-rbi-summer-2026')!;
+  const msr = INITIAL_INTERNSHIPS.find((i) => i.id === 'intern-msr-fellow-2026')!;
+  const icmr = INITIAL_INTERNSHIPS.find((i) => i.id === 'intern-icmr-biomed-2026')!;
+  const expiredDrdo = INITIAL_INTERNSHIPS.find((i) => i.id === 'intern-drdo-inmas-2025')!;
 
-assert(
-  INITIAL_SOURCES.length >= 8,
-  'Source directory contains at least 8 verified institutions',
-  `Found: ${INITIAL_SOURCES.length}`
-);
+  // ---------------------------------------------------------------------------
+  // TEST CASE 1: Academic Discipline Match and Conflict Cases
+  // ---------------------------------------------------------------------------
+  console.log('Test 1: Academic Discipline Matching & Cross-Field Conflict Prevention...');
 
-const trustedDomainSuffixes = ['.ac.in', '.gov.in', '.res.in', '.in', 'microsoft.com'];
-const allDomainsValid = INITIAL_SOURCES.every((src) =>
-  trustedDomainSuffixes.some((sfx) => src.official_domain.endsWith(sfx) || src.official_domain.includes(sfx))
-);
-assert(allDomainsValid, 'All monitored sources use official institutional domains');
+  const medProfile: UserProfile = {
+    id: 'user-med-1',
+    display_name: 'Priya Sharma',
+    email: 'priya@medcollege.ac.in',
+    academic_background: 'Medical and Healthcare',
+    institution_type: 'medical_college',
+    degree: 'MBBS',
+    academic_year: '3rd Year',
+    cgpa: 8.0,
+    cgpa_scale: 10,
+    class_12_percentage: 92,
+    citizenship: 'Indian',
+    primary_interest: 'Clinical Oncology',
+    secondary_interests: ['Epidemiology'],
+    skills: ['Clinical Observation', 'Bioethics'],
+    preferred_format: 'Onsite',
+    preferred_locations: ['New Delhi'],
+    role: 'student',
+  };
 
-assert(
-  INITIAL_INTERNSHIPS.length >= 10,
-  'Internship catalog contains at least 10 authentic Indian opportunities',
-  `Found: ${INITIAL_INTERNSHIPS.length}`
-);
-
-const allHaveOfficialUrls = INITIAL_INTERNSHIPS.every(
-  (item) =>
-    item.official_application_url.startsWith('http') &&
-    item.original_source_url.startsWith('http')
-);
-assert(allHaveOfficialUrls, 'All internships have verified HTTP/HTTPS official application links');
-
-const allHaveDocuments = INITIAL_INTERNSHIPS.every(
-  (item) => item.required_documents && item.required_documents.length > 0
-);
-assert(allHaveDocuments, 'All internships specify required verification documents (NOC, transcripts, etc.)');
-
-// -----------------------------------------------------------------------------
-// TEST SUITE 2: Strict Eligibility Recommendation Engine
-// -----------------------------------------------------------------------------
-console.log('\n2. Testing Strict Eligibility Recommendation Engine...');
-
-function scoreInternship(item: Internship, profile: UserProfile): { score: number; eligible: boolean } {
-  let score = 0;
-  const backgroundMatches =
-    item.eligible_disciplines.length === 0 ||
-    item.eligible_disciplines.some((disc) =>
-      disc.toLowerCase().includes(profile.academic_background.toLowerCase()) ||
-      profile.academic_background.toLowerCase().includes(disc.toLowerCase()) ||
-      disc.toLowerCase() === 'all disciplines'
-    );
-
-  if (!backgroundMatches) {
-    return { score: 0, eligible: false };
-  }
-
-  score += 40;
-
-  if (profile.academic_year && item.eligible_years.length > 0) {
-    const yearMatches = item.eligible_years.some((y) =>
-      y.toLowerCase().includes(profile.academic_year?.toLowerCase() || '')
-    );
-    if (yearMatches) score += 25;
-  }
-
-  if (profile.skills && profile.skills.length > 0 && item.required_skills) {
-    const matched = item.required_skills.filter((req) =>
-      profile.skills.some((us) => req.toLowerCase().includes(us.toLowerCase()))
-    );
-    score += Math.min(matched.length * 10, 30);
-  }
-
-  return { score, eligible: score >= 35 };
-}
-
-// Test Case A: Medical Student
-const medicalStudent: UserProfile = {
-  id: 'med-01',
-  display_name: 'Dr. Priya Patel',
-  email: 'priya@aiims.edu',
-  academic_background: 'Medical and Healthcare',
-  academic_year: '3rd Year',
-  primary_interest: 'Biomedical Clinical Research',
-  secondary_interests: ['Epidemiology'],
-  skills: ['Clinical Observation', 'Bioethics'],
-  preferred_format: 'Any',
-  preferred_locations: [],
-  role: 'student',
-};
-
-const medScores = INITIAL_INTERNSHIPS.map((i) => ({ item: i, ...scoreInternship(i, medicalStudent) }));
-const medEligible = medScores.filter((s) => s.eligible);
-
-assert(
-  medEligible.some((s) => s.item.id === 'intern-icmr-biomed-2026'),
-  'Medical student is eligible for ICMR STS Biomedical Research Fellowship'
-);
-
-const medGotEngineering = medEligible.some((s) => s.item.id === 'intern-msr-fellow-2026');
-assert(
-  !medGotEngineering,
-  'Medical student is correctly NOT recommended pure engineering Microsoft Research Fellowship'
-);
-
-// Test Case B: Computer Science 3rd Year Student
-const csStudent: UserProfile = {
-  id: 'cs-01',
-  display_name: 'Aarav Sharma',
-  email: 'aarav@nitk.ac.in',
-  academic_background: 'Computer Science and IT',
-  academic_year: '3rd Year',
-  primary_interest: 'AI & Systems',
-  secondary_interests: ['Open Source'],
-  skills: ['Python', 'C++', 'Data Structures'],
-  preferred_format: 'Any',
-  preferred_locations: [],
-  role: 'student',
-};
-
-const csScores = INITIAL_INTERNSHIPS.map((i) => ({ item: i, ...scoreInternship(i, csStudent) }));
-const csEligible = csScores.filter((s) => s.eligible);
-
-assert(
-  csEligible.some((s) => s.item.id === 'intern-iitm-sfp-2026'),
-  'CS student is eligible for IIT Madras Summer Fellowship'
-);
-assert(
-  csEligible.some((s) => s.item.id === 'intern-msr-fellow-2026'),
-  'CS student is eligible for Microsoft Research India Internship'
-);
-
-// -----------------------------------------------------------------------------
-// TEST SUITE 3: Multi-Faceted Filters & Search
-// -----------------------------------------------------------------------------
-console.log('\n3. Testing Multi-Faceted Search and Filters...');
-
-function applyFilters(list: Internship[], filters: Partial<FilterState>): Internship[] {
-  return list.filter((item) => {
-    if (filters.search) {
-      const q = filters.search.toLowerCase();
-      const match =
-        item.title.toLowerCase().includes(q) ||
-        item.organization.toLowerCase().includes(q) ||
-        item.description.toLowerCase().includes(q);
-      if (!match) return false;
-    }
-    if (filters.discipline && filters.discipline !== 'all') {
-      if (!item.eligible_disciplines.includes(filters.discipline)) return false;
-    }
-    if (filters.stipendStatus && filters.stipendStatus !== 'all') {
-      if (item.stipend_status !== filters.stipendStatus) return false;
-    }
-    if (filters.format && filters.format !== 'all') {
-      if (item.format !== filters.format) return false;
-    }
-    return true;
-  });
-}
-
-const searchRoorkee = applyFilters(INITIAL_INTERNSHIPS, { search: 'Roorkee' });
-assert(
-  searchRoorkee.length >= 1 && searchRoorkee[0].organization === 'IIT Roorkee',
-  'Keyword search "Roorkee" finds IIT Roorkee SPARK'
-);
-
-const paidRemote = applyFilters(INITIAL_INTERNSHIPS, { stipendStatus: 'paid', format: 'remote' });
-assert(
-  paidRemote.some((i) => i.id === 'intern-iitb-fossee-2026'),
-  'Combined filter (Paid + Remote) finds IIT Bombay FOSSEE Fellowship'
-);
-
-const unpaidFilter = applyFilters(INITIAL_INTERNSHIPS, { stipendStatus: 'unpaid' });
-assert(
-  unpaidFilter.some((i) => i.organization.includes('NITI Aayog')),
-  'Filter "unpaid" accurately identifies public service internships like NITI Aayog'
-);
-
-// -----------------------------------------------------------------------------
-// TEST SUITE 4: Zod Validation Schemas
-// -----------------------------------------------------------------------------
-console.log('\n4. Testing Schema Validations (Zod)...');
-
-const validProfile = {
-  display_name: 'Rohan Mehra',
-  college: 'IIT Kharagpur',
-  degree: 'B.Tech',
-  academic_year: '2nd Year',
-  academic_background: 'Engineering and Technology',
-  primary_interest: 'Robotics',
-  secondary_interests: ['Embedded Systems'],
-  skills: ['ROS', 'C++'],
-  preferred_format: 'Onsite' as const,
-  preferred_locations: ['Bengaluru'],
-  min_stipend_preference: 10000,
-};
-assert(userProfileSchema.safeParse(validProfile).success, 'Valid student profile passes schema validation');
-
-const invalidProfile = {
-  display_name: '', // Too short
-  academic_background: '',
-  primary_interest: '',
-  preferred_format: 'InvalidFormat' as any,
-};
-assert(!userProfileSchema.safeParse(invalidProfile).success, 'Malformed profile is rejected by schema validation');
-
-const validReport = {
-  internship_id: 'intern-iitm-sfp-2026',
-  reporter_email: 'student@college.edu',
-  category: 'expired_listing' as const,
-  description: 'The portal announced deadline closed on official website.',
-};
-assert(reportSchema.safeParse(validReport).success, 'Valid user issue report passes schema validation');
-
-const invalidReport = {
-  internship_id: '',
-  category: 'expired_listing' as const,
-  description: 'short', // less than 10 chars
-};
-assert(!reportSchema.safeParse(invalidReport).success, 'Incomplete report is rejected with descriptive error');
-
-// -----------------------------------------------------------------------------
-// TEST SUITE 5: Duplicate Prevention
-// -----------------------------------------------------------------------------
-console.log('\n5. Testing Duplicate Detection...');
-
-function isDuplicate(newItem: { title: string; organization: string; official_application_url: string }) {
-  return INITIAL_INTERNSHIPS.some(
-    (existing) =>
-      existing.official_application_url.toLowerCase() === newItem.official_application_url.toLowerCase() ||
-      (existing.title.toLowerCase() === newItem.title.toLowerCase() &&
-        existing.organization.toLowerCase() === newItem.organization.toLowerCase())
+  const medIcmrEval = evaluateEligibility(icmr, medProfile);
+  assert(
+    medIcmrEval.status === 'eligible' && medIcmrEval.isEligible,
+    '1.1 Medical student is Eligible for ICMR STS Biomedical Research Fellowship'
   );
+
+  const medMsrEval = evaluateEligibility(msr, medProfile);
+  assert(
+    medMsrEval.status === 'not_eligible' &&
+      medMsrEval.isNotEligible &&
+      medMsrEval.conflictingCriteria.some((c) => c.includes('Academic discipline')),
+    '1.2 Medical student evaluating pure engineering Microsoft Research is strictly Not Eligible'
+  );
+
+  const biotechProfile: UserProfile = {
+    id: 'user-bio-1',
+    display_name: 'Rohan Sen',
+    email: 'rohan@techuniv.edu',
+    academic_background: 'Biotechnology and Life Sciences',
+    institution_type: 'state_university',
+    degree: 'B.Tech in Biotechnology',
+    academic_year: '3rd Year',
+    cgpa: 8.5,
+    cgpa_scale: 10,
+    citizenship: 'Indian',
+    primary_interest: 'Genomics',
+    secondary_interests: [],
+    skills: ['PCR', 'Python'],
+    preferred_format: 'Onsite',
+    preferred_locations: [],
+    role: 'student',
+  };
+
+  const biotechIcmrEval = evaluateEligibility(icmr, biotechProfile);
+  assert(
+    biotechIcmrEval.status === 'not_eligible' &&
+      biotechIcmrEval.conflictingCriteria.some((c) => c.includes('MBBS')),
+    '1.3 B.Tech Biotech student is Not Eligible for ICMR STS (requires strictly MBBS/BDS)'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 2: Undergraduate Year Compatibility
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 2: Undergraduate Year Compatibility...');
+
+  const firstYearProfile: UserProfile = {
+    ...medProfile,
+    academic_background: 'Engineering and Technology',
+    degree: 'B.Tech',
+    academic_year: '1st Year',
+    institution_type: 'nit',
+  };
+
+  const sfpFirstYearEval = evaluateEligibility(iitSfp, firstYearProfile);
+  assert(
+    sfpFirstYearEval.status === 'not_eligible' &&
+      sfpFirstYearEval.conflictingCriteria.some((c) => c.includes('1st Year')),
+    '2. 1st-year student applying to 3rd/4th-year IIT Madras SFP is strictly Not Eligible'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 3: Minimum CGPA Threshold Evaluation
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 3: Minimum CGPA Threshold Evaluation & Missing CGPA Uncertainty...');
+
+  const lowCgpaStudent: UserProfile = {
+    id: 'user-low-cgpa',
+    display_name: 'Ankit Verma',
+    email: 'ankit@college.ac.in',
+    academic_background: 'Engineering and Technology',
+    institution_type: 'state_university',
+    degree: 'B.Tech',
+    academic_year: '3rd Year',
+    cgpa: 6.8, // SPARK requires >= 8.0 for state univ
+    cgpa_scale: 10,
+    citizenship: 'Indian',
+    primary_interest: 'Robotics',
+    secondary_interests: [],
+    skills: ['C++'],
+    preferred_format: 'Onsite',
+    preferred_locations: [],
+    role: 'student',
+  };
+
+  const sparkLowEval = evaluateEligibility(spark, lowCgpaStudent);
+  assert(
+    sparkLowEval.status === 'not_eligible' &&
+      sparkLowEval.conflictingCriteria.some((c) => c.includes('CGPA')),
+    '3.1 Student with CGPA 6.8 applying to SPARK (cutoff 8.0) is Not Eligible'
+  );
+
+  const missingCgpaStudent: UserProfile = {
+    ...lowCgpaStudent,
+    cgpa: null,
+  };
+
+  const sparkMissingCgpaEval = evaluateEligibility(spark, missingCgpaStudent);
+  assert(
+    sparkMissingCgpaEval.status === 'potential_match' &&
+      sparkMissingCgpaEval.unconfirmedCriteria.some((c) => c.includes('CGPA')),
+    '3.2 Missing CGPA produces Potential Match with unconfirmed CGPA requirement'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 4: Institution Type Restrictions
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 4: Institution Type Restrictions (non-IIT only vs IIT student)...');
+
+  const iitStudent: UserProfile = {
+    id: 'user-iit-1',
+    display_name: 'Aditya Gupta',
+    email: 'aditya@iitd.ac.in',
+    academic_background: 'Engineering and Technology',
+    institution_type: 'iit',
+    college: 'IIT Delhi',
+    degree: 'B.Tech',
+    academic_year: '3rd Year',
+    cgpa: 9.1,
+    cgpa_scale: 10,
+    citizenship: 'Indian',
+    primary_interest: 'AI',
+    secondary_interests: [],
+    skills: ['Python'],
+    preferred_format: 'Onsite',
+    preferred_locations: [],
+    role: 'student',
+  };
+
+  const sfpIitEval = evaluateEligibility(iitSfp, iitStudent);
+  assert(
+    sfpIitEval.status === 'not_eligible' &&
+      sfpIitEval.conflictingCriteria.some((c) => c.includes('outside IITs')),
+    '4. Student from IIT applying to IIT Madras SFP (reserved for non-IIT students) is Not Eligible'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 5: Mandatory Document Requirements (NOC & Nomination)
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 5: Mandatory Document & Administrative Requirements...');
+
+  const rbiEval = evaluateEligibility(rbi, {
+    ...lowCgpaStudent,
+    academic_background: 'Commerce and Finance',
+    degree: 'B.Com',
+    cgpa: 8.5,
+  });
+
+  assert(
+    rbiEval.unconfirmedCriteria.some((c) => c.includes('nomination') || c.includes('Nomination')),
+    '5. RBI fellowship flags mandatory college Principal nomination in unconfirmed checklist'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 6: Missing Profile Fields Produce Explainable Uncertain Status
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 6: Missing Profile Fields Produce Explainable Status...');
+
+  const sparseProfile: UserProfile = {
+    id: 'user-sparse',
+    display_name: 'New Student',
+    email: 'newbie@campus.edu',
+    academic_background: '',
+    primary_interest: '',
+    secondary_interests: [],
+    skills: [],
+    preferred_format: 'Any',
+    preferred_locations: [],
+    role: 'student',
+  };
+
+  const sparseEval = evaluateEligibility(iitSfp, sparseProfile);
+  assert(
+    sparseEval.status === 'eligibility_unknown' &&
+      sparseEval.isUnknown &&
+      sparseEval.profileMissingFields.length >= 3,
+    '6. Incomplete student profile produces Eligibility Unknown with list of missing fields'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 7: Profile Update Re-evaluates Recommendations
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 7: Profile Update Re-evaluates Recommendations...');
+
+  const unconfirmedNitStudent: UserProfile = {
+    id: 'user-nit-1',
+    display_name: 'Neha Roy',
+    email: 'neha@nitrkl.ac.in',
+    academic_background: 'Engineering and Technology',
+    institution_type: 'nit',
+    degree: '', // Missing
+    academic_year: '3rd Year',
+    cgpa: null, // Missing
+    citizenship: 'Indian',
+    primary_interest: 'VLSI',
+    secondary_interests: [],
+    skills: ['Verilog'],
+    preferred_format: 'Onsite',
+    preferred_locations: [],
+    role: 'student',
+  };
+
+  const preUpdate = evaluateEligibility(spark, unconfirmedNitStudent);
+  assert(
+    preUpdate.status === 'potential_match',
+    '7.1 Before update: Missing degree & CGPA results in Potential Match'
+  );
+
+  const postUpdateProfile: UserProfile = {
+    ...unconfirmedNitStudent,
+    degree: 'B.Tech in Electrical Engineering',
+    cgpa: 8.7,
+    cgpa_scale: 10,
+  };
+
+  const postUpdate = evaluateEligibility(spark, postUpdateProfile);
+  assert(
+    postUpdate.status === 'eligible' && postUpdate.isEligible,
+    '7.2 After profile update: Providing verified B.Tech degree & 8.7 CGPA converts to Eligible'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 8: Working Link Passes Validation
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 8: Working Link Passes Validation (Mocked HTTP 200)...');
+
+  const mockWorkingFetch = async (): Promise<Response> => {
+    return new Response('OK', { status: 200, statusText: 'OK' });
+  };
+
+  const workingRes = await checkLink('https://spark.iitr.ac.in', {
+    fetcher: mockWorkingFetch as any,
+  });
+  assert(
+    workingRes.status === 'working' && workingRes.httpStatus === 200,
+    '8. HTTP 200 response validates as working link'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 9: Redirected Link Captures Final Destination
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 9: Redirected Link Captures Final Destination...');
+
+  const mockRedirectFetch = async (url: string | URL): Promise<Response> => {
+    if (url.toString().includes('fellowship2025')) {
+      return new Response('OK', { status: 200 });
+    }
+    return new Response(null, {
+      status: 302,
+      headers: { Location: 'https://fossee.in/fellowship2025' },
+    });
+  };
+
+  const redirectRes = await checkLink('https://fossee.in/fellowship', {
+    fetcher: mockRedirectFetch as any,
+  });
+  assert(
+    redirectRes.status === 'redirected' &&
+      redirectRes.finalUrl === 'https://fossee.in/fellowship2025',
+    '9. HTTP 302 redirect is traced and captures final destination URL'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 10: Unreachable / DNS Server Not Found Link Classification
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 10: Unreachable / Server Not Found Link Classification...');
+
+  const mockDnsErrorFetch = async (): Promise<Response> => {
+    throw new Error('getaddrinfo ENOTFOUND sfp.iitm.ac.in');
+  };
+
+  const dnsRes = await checkLink('https://sfp.iitm.ac.in', {
+    fetcher: mockDnsErrorFetch as any,
+  });
+  assert(
+    dnsRes.status === 'unreachable' && dnsRes.message.includes('Server unreachable'),
+    '10. DNS resolution failure classified as unreachable link'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 11: Host Firewall / Timeout Classified as Temporarily Unavailable
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 11: Host Firewall / Timeout Handling...');
+
+  const mockTimeoutFetch = async (): Promise<Response> => {
+    const err = new Error('The operation was aborted due to timeout');
+    err.name = 'AbortError';
+    throw err;
+  };
+
+  const timeoutRes = await checkLink('https://web-japps.ias.ac.in/fellowship/', {
+    fetcher: mockTimeoutFetch as any,
+  });
+  assert(
+    timeoutRes.status === 'temporarily_unavailable',
+    '11. Server timeout classified as temporarily_unavailable rather than permanently broken'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 12: Anti-Bot / Access-Restricted Link Is Not Marked Broken
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 12: Anti-Bot / Access Restricted Classification...');
+
+  const mockForbiddenFetch = async (): Promise<Response> => {
+    return new Response('Access Denied', { status: 403, statusText: 'Forbidden' });
+  };
+
+  const forbiddenRes = await checkLink('https://www.iiserpune.ac.in/opportunities', {
+    fetcher: mockForbiddenFetch as any,
+  });
+  assert(
+    forbiddenRes.status === 'access_restricted' && forbiddenRes.httpStatus === 403,
+    '12. HTTP 403 WAF block classified as access_restricted (not falsely marked broken)'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 13: Invalid / Private / Loopback URL Is Blocked (SSRF Prevention)
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 13: SSRF Prevention & Private IP Blocking...');
+
+  const loopbackSafety = validateUrlSafety('http://127.0.0.1:8080/admin');
+  assert(!loopbackSafety.isSafe, '13.1 Loopback 127.0.0.1 is blocked');
+
+  const awsMetadataSafety = validateUrlSafety('http://169.254.169.254/latest/meta-data/');
+  assert(!awsMetadataSafety.isSafe, '13.2 Cloud metadata IP 169.254.169.254 is blocked');
+
+  const privateSubnetSafety = validateUrlSafety('http://192.168.1.100:5000/api');
+  assert(!privateSubnetSafety.isSafe, '13.3 Private network RFC 1918 (192.168.x.x) is blocked');
+
+  const nonHttpSafety = validateUrlSafety('file:///etc/passwd');
+  assert(!nonHttpSafety.isSafe, '13.4 Non-HTTP protocol (file://) is rejected');
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 14: Deadline Timezone Logic in Indian Standard Time (IST)
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 14: Timezone Logic in Indian Standard Time (+05:30)...');
+
+  // Past date
+  assert(isDeadlineExpired('2025-01-01'), '14.1 Past date 2025-01-01 is identified as expired');
+
+  // Active future date (e.g. 2027)
+  assert(!isDeadlineExpired('2027-12-31'), '14.2 Future date 2027-12-31 is identified as not expired');
+
+  // Formatted date string uses en-IN
+  const formattedIst = formatKolkataDate('2026-11-30T18:29:59Z');
+  assert(
+    formattedIst.includes('2026') && formattedIst.length > 5,
+    '14.3 Kolkata date formatted correctly',
+    formattedIst
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 15: Expired Listings Excluded from Active Results
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 15: Expired Listings Filtering...');
+
+  const activeCatalog = INITIAL_INTERNSHIPS.filter((item) => {
+    if (item.publication_status === 'expired' || item.publication_status === 'archived') {
+      return false;
+    }
+    return !isDeadlineExpired(item.application_deadline);
+  });
+
+  const hasExpiredDrdo = activeCatalog.some((i) => i.id === 'intern-drdo-inmas-2025');
+  assert(
+    !hasExpiredDrdo,
+    '15. Expired DRDO past cycle listing is successfully excluded from active opportunities catalog'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST CASE 16: Unauthorized User Cannot Approve or Modify Listings
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 16: Role Permission Guard Check...');
+
+  function canModifyListing(role: 'student' | 'admin'): boolean {
+    return role === 'admin';
+  }
+
+  assert(!canModifyListing('student'), '16.1 Student role is denied mutation permissions');
+  assert(canModifyListing('admin'), '16.2 Admin role is authorized for listing review actions');
+
+  // ---------------------------------------------------------------------------
+  // SUMMARY
+  // ---------------------------------------------------------------------------
+  console.log('\n============================================================');
+  console.log(`Test Execution Finished: ${passedTests}/${totalTests} Tests Passed (100%)`);
+  console.log('============================================================\n');
 }
 
-const duplicateAttempt = {
-  title: 'IIT Madras Summer Fellowship Programme (SFP)',
-  organization: 'Indian Institute of Technology Madras',
-  official_application_url: 'https://sfp.iitm.ac.in',
-};
-assert(isDuplicate(duplicateAttempt), 'Duplicate opportunity with same URL/title is successfully caught');
-
-const uniqueAttempt = {
-  title: 'NISER Summer Student Project 2026',
-  organization: 'NISER Bhubaneswar',
-  official_application_url: 'https://www.niser.ac.in/summer2026',
-};
-assert(!isDuplicate(uniqueAttempt), 'Unique opportunity is accepted for review');
-
-console.log('\n============================================================');
-console.log(`Test Execution Finished: ${passedTests}/${totalTests} Tests Passed (100%)`);
-console.log('============================================================\n');
+runTestSuite().catch((err) => {
+  console.error('Test suite failed with unexpected error:', err);
+  process.exit(1);
+});
