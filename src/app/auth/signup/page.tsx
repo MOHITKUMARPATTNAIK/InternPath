@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { signupFormSchema } from '@/lib/validations';
 import { Futuristic3DBackground } from '@/components/auth/Futuristic3DBackground';
@@ -18,12 +18,13 @@ import {
   Lock,
   User,
   Mail,
-  Zap,
 } from 'lucide-react';
 
-export default function SignupPage() {
+function SignupForm() {
   const router = useRouter();
-  const { user, loading: authLoading, signUp, loginAsDemo } = useAuth();
+  const searchParams = useSearchParams();
+  const redirectUrl = searchParams.get('redirect') || '/internships';
+  const { user, loading: authLoading, signUp } = useAuth();
 
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
@@ -40,12 +41,12 @@ export default function SignupPage() {
   const [requiresConfirmation, setRequiresConfirmation] = useState(false);
   const [confirmationEmail, setConfirmationEmail] = useState('');
 
-  // If already authenticated, redirect away from signup
+  // If already authenticated, redirect away from signup to requested destination
   useEffect(() => {
     if (!authLoading && user) {
-      router.replace('/internships');
+      router.replace(redirectUrl);
     }
-  }, [user, authLoading, router]);
+  }, [user, authLoading, router, redirectUrl]);
 
   // Dynamic Password Strength Calculation
   const passwordStrength = useMemo(() => {
@@ -110,13 +111,8 @@ export default function SignupPage() {
       setConfirmationEmail(email);
       setRequiresConfirmation(true);
     } else {
-      router.push('/internships');
+      router.push(redirectUrl);
     }
-  };
-
-  const handleQuickDemoStudent = () => {
-    loginAsDemo('student');
-    router.push('/internships');
   };
 
   // If Supabase returned an email confirmation requirement
@@ -146,7 +142,7 @@ export default function SignupPage() {
 
           <div className="pt-2">
             <Link
-              href="/auth/login"
+              href={redirectUrl !== '/internships' ? `/auth/login?redirect=${encodeURIComponent(redirectUrl)}` : '/auth/login'}
               className="inline-flex items-center justify-center w-full py-3 px-4 rounded-xl font-bold text-xs text-slate-900 bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 transition shadow-[0_0_20px_rgba(6,182,212,0.3)]"
             >
               Sign In to Your Account
@@ -177,26 +173,6 @@ export default function SignupPage() {
             <p className="text-xs sm:text-sm text-slate-400">
               Start discovering trusted internship opportunities across India.
             </p>
-          </div>
-
-          {/* Quick Demo Access Bar */}
-          <div className="p-3 rounded-2xl bg-slate-950/60 border border-cyan-500/20 flex flex-col sm:flex-row items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2 text-left">
-              <div className="w-7 h-7 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400 flex-shrink-0">
-                <Zap className="w-4 h-4" />
-              </div>
-              <div>
-                <p className="text-[11px] font-bold text-white">Instant Testing Preview?</p>
-                <p className="text-[10px] text-slate-400">One-click student evaluation bypass</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleQuickDemoStudent}
-              className="w-full sm:w-auto px-3.5 py-1.5 rounded-xl text-xs font-bold text-cyan-300 bg-cyan-500/15 border border-cyan-500/40 hover:bg-cyan-500/25 transition shadow-sm"
-            >
-              Explore as Demo Student
-            </button>
           </div>
 
           {/* Alert Error Box */}
@@ -471,7 +447,7 @@ export default function SignupPage() {
           <div className="pt-2 text-center text-xs text-slate-400 border-t border-slate-800/80">
             Already have an account?{' '}
             <Link
-              href="/auth/login"
+              href={redirectUrl !== '/internships' ? `/auth/login?redirect=${encodeURIComponent(redirectUrl)}` : '/auth/login'}
               className="text-cyan-400 font-bold hover:text-cyan-300 hover:underline transition"
             >
               Sign In
@@ -480,5 +456,22 @@ export default function SignupPage() {
         </div>
       </div>
     </Futuristic3DBackground>
+  );
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen w-full flex items-center justify-center bg-slate-950">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 border-3 border-cyan-400 border-t-transparent rounded-full animate-spin shadow-[0_0_20px_rgba(6,182,212,0.5)]" />
+            <p className="text-xs text-cyan-300 font-semibold tracking-wider uppercase">Loading InternPath...</p>
+          </div>
+        </div>
+      }
+    >
+      <SignupForm />
+    </Suspense>
   );
 }

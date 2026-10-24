@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
 import { UserProfile } from '@/types';
 import { createClient, isSupabaseConfigured } from './supabase/client';
 
@@ -18,7 +18,7 @@ interface AuthContextType {
   isConfigured: boolean;
   signIn: (email: string, password?: string) => Promise<{ error?: string }>;
   signUp: (email: string, password?: string, displayName?: string) => Promise<{ error?: string; requiresEmailConfirmation?: boolean }>;
-  signOut: () => Promise<void>;
+  signOut: () => Promise<{ error?: string }>;
   updateProfile: (data: Partial<UserProfile>) => Promise<{ error?: string }>;
   switchDemoRole: (role: 'student' | 'admin') => void;
   loginAsDemo: (role?: 'student' | 'admin') => void;
@@ -58,6 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const isConfigured = isSupabaseConfigured();
+  const isLoggingOutRef = useRef<boolean>(false);
 
   useEffect(() => {
     async function initAuth() {
@@ -258,29 +259,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signOut = async () => {
-    if (isConfigured) {
-      const supabase = createClient();
-      if (supabase) {
-        await supabase.auth.signOut();
-      }
+  const signOut = async (): Promise<{ error?: string }> => {
+    // Prevent duplicate logout requests and race conditions
+    if (isLoggingOutRef.current) {
+      return {};
     }
-    // Safely clear only demo session keys, preserving saved internships and application data
+    isLoggingOutRef.current = true;
+
     try {
-      sessionStorage.removeItem('internpath_demo_user');
-      sessionStorage.removeItem('internpath_demo_profile');
-      localStorage.removeItem('internpath_demo_user');
-      localStorage.removeItem('internpath_demo_profile');
-    } catch {
-      // Ignore storage cleanup issues in sandbox
+      let signoutError: string | undefined;
+
+      if (isConfigured) {
+        const supabase = createClient();
+        if (supabase) {
+          const { error } = await supabase.auth.signOut();
+          if (error) {
+            console.error('Supabase signOut error:', error.message);
+            signoutError = error.message;
+          }
+        }
+      }
+
+      // Safely clear demo session keys, strictly preserving saved internships and application data
+      try {
+        sessionStorage.removeItem('internpath_demo_user');
+        sessionStorage.removeItem('internpath_demo_profile');
+        localStorage.removeItem('internpath_demo_user');
+        localStorage.removeItem('internpath_demo_profile');
+      } catch {
+        // Ignore storage cleanup issues in sandboxed browsers
+      }
+
+      // Immediately clear in-memory user and profile state to prevent stale data display
+      setUser(null);
+      setProfile(null);
+
+      if (signoutError) {
+        return { error: signoutError };
+      }
+      return {};
+    } finally {
+      isLoggingOutRef.current = false;
     }
-    setUser(null);
-    setProfile(null);
   };
 
   const updateProfile = async (data: Partial<UserProfile>): Promise<{ error?: string }> => {
     if (!user || !profile) return { error: 'Not authenticated' };
-    const updated = { ...profile, ...data, updated_at: new Date().toISOString() };
+
+    // Strip protected fields: never accept an admin role or modified ID from client-submitted data
+    const safeData = { ...data };
+    delete (safeData as any).role;
+    delete (safeData as any).id;
+
+    const updated = { ...profile, ...safeData, updated_at: new Date().toISOString() };
     if (isConfigured) {
       const supabase = createClient();
       if (supabase) {
@@ -291,8 +322,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sessionStorage.setItem('internpath_demo_profile', JSON.stringify(updated));
     }
     setProfile(updated);
-    if (data.display_name && data.display_name !== user.display_name) {
-      const updatedUser = { ...user, display_name: data.display_name };
+    if (safeData.display_name && safeData.display_name !== user.display_name) {
+      const updatedUser = { ...user, display_name: safeData.display_name };
       setUser(updatedUser);
       if (!isConfigured) {
         sessionStorage.setItem('internpath_demo_user', JSON.stringify(updatedUser));
@@ -302,8 +333,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const switchDemoRole = (newRole: 'student' | 'admin') => {
+    // Demo functionality is strictly forbidden in production or when Supabase is configured
+    if (process.env.NODE_ENV === 'production' || isConfigured) {
+      console.warn('Security Notice: Demo role switching is disabled in production environments.');
+      return;
+    }
     if (!user) return;
-    if (isConfigured) return; // Strict security: never allow demo role switching in production Supabase mode
     const updatedUser: AuthUser = { ...user, role: newRole };
     const updatedProfile: UserProfile = profile
       ? { ...profile, role: newRole }
@@ -315,6 +350,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const loginAsDemo = (role: 'student' | 'admin' = 'student') => {
+    // Demo functionality is strictly forbidden in production or when Supabase is configured
+    if (process.env.NODE_ENV === 'production' || isConfigured) {
+      console.warn('Security Notice: Demo login is disabled in production environments.');
+      return;
+    }
     const isAdm = role === 'admin';
     const authUser: AuthUser = isAdm
       ? {
@@ -336,10 +376,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     setUser(authUser);
     setProfile(userProf);
-    if (!isConfigured) {
-      sessionStorage.setItem('internpath_demo_user', JSON.stringify(authUser));
-      sessionStorage.setItem('internpath_demo_profile', JSON.stringify(userProf));
-    }
+    sessionStorage.setItem('internpath_demo_user', JSON.stringify(authUser));
+    sessionStorage.setItem('internpath_demo_profile', JSON.stringify(userProf));
   };
 
   const resetPassword = async (email: string): Promise<{ error?: string; message?: string }> => {

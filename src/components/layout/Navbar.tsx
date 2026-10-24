@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import {
   Bookmark,
@@ -15,9 +15,17 @@ import {
 
 export function Navbar() {
   const pathname = usePathname();
+  const router = useRouter();
   const { user, signOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+
+  const handleLogout = async () => {
+    setUserDropdownOpen(false);
+    setMobileMenuOpen(false);
+    await signOut();
+    router.push('/auth/signup');
+  };
 
   const navLinks = [
     ...(user ? [] : [{ label: 'Home', href: '/' }]),
@@ -148,11 +156,8 @@ export function Navbar() {
                     <div className="border-t border-slate-100 my-1"></div>
 
                     <button
-                      onClick={() => {
-                        setUserDropdownOpen(false);
-                        signOut();
-                      }}
-                      className="w-full flex items-center gap-2 px-4 py-2 text-xs text-rose-600 hover:bg-rose-50 transition text-left"
+                      onClick={handleLogout}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-xs text-rose-600 hover:bg-rose-50 transition text-left cursor-pointer"
                     >
                       <LogOut className="w-3.5 h-3.5 text-rose-500" />
                       <span>Log Out</span>
@@ -228,11 +233,8 @@ export function Navbar() {
                   <div className="text-[11px] text-slate-500">{user.email}</div>
                 </div>
                 <button
-                  onClick={() => {
-                    setMobileMenuOpen(false);
-                    signOut();
-                  }}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-rose-600 bg-rose-50"
+                  onClick={handleLogout}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-rose-600 bg-rose-50 hover:bg-rose-100 transition cursor-pointer"
                 >
                   <LogOut className="w-4 h-4" />
                   <span>Log Out</span>

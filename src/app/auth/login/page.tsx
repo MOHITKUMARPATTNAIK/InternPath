@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { loginSchema } from '@/lib/validations';
 import { Futuristic3DBackground } from '@/components/auth/Futuristic3DBackground';
@@ -11,29 +11,29 @@ import {
   AlertCircle,
   ArrowRight,
   ShieldCheck,
-  User,
   Eye,
   EyeOff,
   Lock,
   Mail,
-  Zap,
 } from 'lucide-react';
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
-  const { user, loading: authLoading, signIn, loginAsDemo } = useAuth();
+  const searchParams = useSearchParams();
+  const redirectUrl = searchParams.get('redirect') || '/internships';
+  const { user, loading: authLoading, signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // If already authenticated, redirect to internships or home
+  // If already authenticated, redirect to requested destination
   useEffect(() => {
     if (!authLoading && user) {
-      router.replace('/internships');
+      router.replace(redirectUrl);
     }
-  }, [user, authLoading, router]);
+  }, [user, authLoading, router, redirectUrl]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,13 +54,8 @@ export default function LoginPage() {
     if (result.error) {
       setError(result.error);
     } else {
-      router.push('/internships');
+      router.push(redirectUrl);
     }
-  };
-
-  const handleQuickDemo = (role: 'student' | 'admin') => {
-    loginAsDemo(role);
-    router.push(role === 'admin' ? '/admin' : '/internships');
   };
 
   return (
@@ -83,35 +78,6 @@ export default function LoginPage() {
             <p className="text-xs sm:text-sm text-slate-400">
               Access your personalized recommendations, saved internships, and tracker.
             </p>
-          </div>
-
-          {/* Quick Demo Access Bar */}
-          <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-cyan-500/20 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-cyan-400" />
-                Instant Demo Profiles
-              </span>
-              <span className="text-[10px] text-cyan-400/80 font-medium">Bypass login for testing</span>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => handleQuickDemo('student')}
-                className="py-2 px-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500/20 text-left text-cyan-300 transition flex items-center gap-2 text-xs font-semibold cursor-pointer"
-              >
-                <User className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Demo Student</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickDemo('admin')}
-                className="py-2 px-3 rounded-xl bg-violet-500/10 border border-violet-500/30 hover:bg-violet-500/20 text-left text-violet-300 transition flex items-center gap-2 text-xs font-semibold cursor-pointer"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-violet-400" />
-                <span>Demo Admin</span>
-              </button>
-            </div>
           </div>
 
           {/* Alert Error Box */}
@@ -172,7 +138,7 @@ export default function LoginPage() {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-cyan-400 transition"
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-cyan-400 transition cursor-pointer"
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -212,7 +178,7 @@ export default function LoginPage() {
           <div className="pt-2 text-center text-xs text-slate-400 border-t border-slate-800/80">
             Don&apos;t have an account?{' '}
             <Link
-              href="/auth/signup"
+              href={redirectUrl !== '/internships' ? `/auth/signup?redirect=${encodeURIComponent(redirectUrl)}` : '/auth/signup'}
               className="text-cyan-400 font-bold hover:text-cyan-300 hover:underline transition"
             >
               Create Account
@@ -221,5 +187,22 @@ export default function LoginPage() {
         </div>
       </div>
     </Futuristic3DBackground>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen w-full flex items-center justify-center bg-slate-950">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 border-3 border-cyan-400 border-t-transparent rounded-full animate-spin shadow-[0_0_20px_rgba(6,182,212,0.5)]" />
+            <p className="text-xs text-cyan-300 font-semibold tracking-wider uppercase">Loading InternPath...</p>
+          </div>
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   );
 }

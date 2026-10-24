@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { signupFormSchema, loginSchema } from '@/lib/validations';
 import { Futuristic3DBackground } from '@/components/auth/Futuristic3DBackground';
@@ -18,14 +18,15 @@ import {
   Lock,
   User,
   Mail,
-  Zap,
   LogIn,
   UserPlus,
 } from 'lucide-react';
 
-export default function RootAuthEntryPage() {
+function RootAuthEntryForm() {
   const router = useRouter();
-  const { user, loading: authLoading, signUp, signIn, loginAsDemo } = useAuth();
+  const searchParams = useSearchParams();
+  const redirectUrl = searchParams.get('redirect') || '/internships';
+  const { user, loading: authLoading, signUp, signIn } = useAuth();
 
   // Mode: defaults to 'signup' for the signup-first experience
   const [mode, setMode] = useState<'signup' | 'signin'>('signup');
@@ -47,12 +48,12 @@ export default function RootAuthEntryPage() {
   const [requiresConfirmation, setRequiresConfirmation] = useState(false);
   const [confirmationEmail, setConfirmationEmail] = useState('');
 
-  // If already authenticated with a valid real session or explicit demo session, route to /internships
+  // If already authenticated with a valid real session or explicit demo session, route to requested target
   useEffect(() => {
     if (!authLoading && user) {
-      router.replace('/internships');
+      router.replace(redirectUrl);
     }
-  }, [user, authLoading, router]);
+  }, [user, authLoading, router, redirectUrl]);
 
   // Dynamic Password Strength Meter
   const passwordStrength = useMemo(() => {
@@ -119,7 +120,7 @@ export default function RootAuthEntryPage() {
         setConfirmationEmail(email);
         setRequiresConfirmation(true);
       } else {
-        router.push('/internships');
+        router.push(redirectUrl);
       }
     } else {
       // Sign In mode
@@ -136,18 +137,12 @@ export default function RootAuthEntryPage() {
       if (result.error) {
         setError(result.error);
       } else {
-        router.push('/internships');
+        router.push(redirectUrl);
       }
     }
   };
 
-  // Explicit opt-in Demo handler
-  const handleQuickDemo = (role: 'student' | 'admin') => {
-    loginAsDemo(role);
-    router.push(role === 'admin' ? '/admin' : '/internships');
-  };
-
-  // While checking auth state or if already authenticated (redirecting to /internships)
+  // While checking auth state or if already authenticated (redirecting to requested destination)
   if (authLoading || user) {
     return (
       <div className="min-h-screen w-full flex items-center justify-center bg-slate-950">
@@ -259,35 +254,6 @@ export default function RootAuthEntryPage() {
               <LogIn className="w-3.5 h-3.5" />
               <span>Sign In</span>
             </button>
-          </div>
-
-          {/* Explicit Opt-in Demo Bar (Never automatic) */}
-          <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-cyan-500/20 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-cyan-400" />
-                Instant Demo Evaluation
-              </span>
-              <span className="text-[10px] text-cyan-400/80 font-medium">Explicit opt-in preview</span>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => handleQuickDemo('student')}
-                className="py-1.5 px-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500/20 text-left text-cyan-300 transition flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
-              >
-                <User className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Demo Student</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickDemo('admin')}
-                className="py-1.5 px-3 rounded-xl bg-violet-500/10 border border-violet-500/30 hover:bg-violet-500/20 text-left text-violet-300 transition flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-violet-400" />
-                <span>Demo Admin</span>
-              </button>
-            </div>
           </div>
 
           {/* Alert Error Box */}
@@ -609,5 +575,22 @@ export default function RootAuthEntryPage() {
         </div>
       </div>
     </Futuristic3DBackground>
+  );
+}
+
+export default function RootAuthEntryPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen w-full flex items-center justify-center bg-slate-950">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 border-3 border-cyan-400 border-t-transparent rounded-full animate-spin shadow-[0_0_20px_rgba(6,182,212,0.5)]" />
+            <p className="text-xs text-cyan-300 font-semibold tracking-wider uppercase">Loading InternPath...</p>
+          </div>
+        </div>
+      }
+    >
+      <RootAuthEntryForm />
+    </Suspense>
   );
 }

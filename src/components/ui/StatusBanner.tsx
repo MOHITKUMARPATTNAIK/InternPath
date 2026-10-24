@@ -6,7 +6,7 @@ import { Database, Info, Shield, X, CheckCircle, RefreshCw } from 'lucide-react'
 import { resetDemoData } from '@/lib/data-service';
 
 export function StatusBanner() {
-  const { isConfigured, user, switchDemoRole } = useAuth();
+  const { isConfigured, user } = useAuth();
   const [dismissed, setDismissed] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
 
@@ -50,17 +50,13 @@ export function StatusBanner() {
                 <span>Supabase Setup Guide</span>
               </button>
 
-              {user && (
+              {user && !isConfigured && process.env.NODE_ENV !== 'production' && (
                 <div className="flex items-center gap-1.5 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
                   <Shield className="w-3 h-3 text-slate-400" />
-                  <span className="text-slate-400">Role:</span>
-                  <button
-                    onClick={() => switchDemoRole(user.role === 'admin' ? 'student' : 'admin')}
-                    className="font-medium text-amber-300 hover:text-amber-200 transition-colors uppercase"
-                    title="Click to toggle between Student and Admin mode"
-                  >
-                    {user.role} (Switch)
-                  </button>
+                  <span className="text-slate-400">Dev Role:</span>
+                  <span className="font-medium text-amber-300 uppercase">
+                    {user.role}
+                  </span>
                 </div>
               )}
 

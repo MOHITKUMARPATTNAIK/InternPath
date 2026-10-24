@@ -52,7 +52,7 @@ import {
 } from 'lucide-react';
 
 export default function AdminDashboardPage() {
-  const { user, switchDemoRole } = useAuth();
+  const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState<
     'internships' | 'review_queue' | 'sources' | 'pipeline' | 'reports'
@@ -162,34 +162,31 @@ export default function AdminDashboardPage() {
   if (!user || user.role !== 'admin') {
     return (
       <div className="max-w-md mx-auto py-24 px-4 text-center space-y-4">
-        <div className="w-14 h-14 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-600 mx-auto border border-amber-200">
+        <div className="w-14 h-14 bg-rose-50 rounded-2xl flex items-center justify-center text-rose-600 mx-auto border border-rose-200">
           <Shield className="w-8 h-8" />
         </div>
         <h1 className="text-xl font-bold text-slate-900">Administrator Clearance Required</h1>
         <p className="text-xs text-slate-600 leading-relaxed">
           The Admin Portal is restricted to verified administrators and collection supervisors to maintain data
-          trustworthiness.
+          trustworthiness. Your current account does not possess administrator clearance.
         </p>
 
-        {user ? (
-          <div className="pt-2">
-            <button
-              onClick={() => switchDemoRole('admin')}
-              className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition shadow-sm"
-            >
-              Switch My Role to Admin (Demo Evaluator)
-            </button>
-          </div>
-        ) : (
-          <div className="pt-2 flex justify-center gap-3">
+        <div className="pt-2 flex justify-center gap-3">
+          <Link
+            href="/internships"
+            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition"
+          >
+            Return to Internships
+          </Link>
+          {!user && (
             <Link
-              href="/auth/login"
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-semibold"
+              href="/auth/login?redirect=/admin"
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold transition"
             >
               Sign In as Admin
             </Link>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     );
   }
