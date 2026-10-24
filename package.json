@@ -7,8 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "npx tsx scripts/test-internpath.ts && npx tsx scripts/test-collection-pipeline.ts && npx tsx scripts/test-auth-signup-flow.ts && npx tsx scripts/test-credential-auth-security.ts",
-    "test:auth": "npx tsx scripts/test-auth-signup-flow.ts && npx tsx scripts/test-credential-auth-security.ts"
+    "test": "npx tsx scripts/test-internpath.ts && npx tsx scripts/test-collection-pipeline.ts && npx tsx scripts/test-auth-signup-flow.ts && npx tsx scripts/test-credential-auth-security.ts && npx tsx scripts/test-owner-admin-system.ts",
+    "test:auth": "npx tsx scripts/test-auth-signup-flow.ts && npx tsx scripts/test-credential-auth-security.ts && npx tsx scripts/test-owner-admin-system.ts",
+    "promote-admin": "npx tsx --env-file=.env.local scripts/promote-admin.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

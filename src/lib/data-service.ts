@@ -170,12 +170,38 @@ export async function updateSource(
   return null;
 }
 
+export async function deleteSource(
+  id: string,
+  options?: { client?: SupabaseClient }
+): Promise<boolean> {
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
+    if (supabase) {
+      const { error } = await supabase.from('sources').delete().eq('id', id);
+      if (error) {
+        console.error(`[Supabase Error] Failed to delete source ${id}:`, error.message);
+        throw new Error(`Database error deleting source: ${error.message}`);
+      }
+      return true;
+    }
+  }
+
+  if (isDemoModeAllowed()) {
+    const sources = await getSources(options);
+    const updated = sources.filter((s) => s.id !== id);
+    setLocal(STORAGE_KEYS.SOURCES, updated);
+    return true;
+  }
+
+  return false;
+}
+
 // ------------------------------------------------------------------------------
 // INTERNSHIPS
 // ------------------------------------------------------------------------------
 export async function getInternships(
   filters?: Partial<FilterState>,
-  options?: { client?: SupabaseClient }
+  options?: { client?: SupabaseClient; includeAllStatuses?: boolean }
 ): Promise<Internship[]> {
   let list: Internship[] = [];
   let fetchedFromSupabase = false;
@@ -183,11 +209,11 @@ export async function getInternships(
   if (options?.client || isSupabaseConfigured()) {
     const supabase = options?.client || createClient();
     if (supabase) {
-      const { data, error } = await supabase
-        .from('internships')
-        .select('*')
-        .eq('publication_status', 'published')
-        .order('published_at', { ascending: false });
+      let query = supabase.from('internships').select('*');
+      if (!options?.includeAllStatuses) {
+        query = query.eq('publication_status', 'published');
+      }
+      const { data, error } = await query.order('published_at', { ascending: false });
 
       if (error) {
         console.error('[Supabase Error] Failed to fetch internships:', error.message);
@@ -203,6 +229,9 @@ export async function getInternships(
     if (isDemoModeAllowed()) {
       initializeSeedData();
       list = getLocal<Internship[]>(STORAGE_KEYS.INTERNSHIPS, INITIAL_INTERNSHIPS);
+      if (!options?.includeAllStatuses) {
+        list = list.filter((item) => item.publication_status === 'published');
+      }
     } else {
       list = [];
     }
@@ -421,6 +450,52 @@ export async function updateInternship(
   }
 
   return null;
+}
+
+export async function deleteInternship(
+  id: string,
+  options?: { client?: SupabaseClient }
+): Promise<boolean> {
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
+    if (supabase) {
+      const { error } = await supabase.from('internships').delete().eq('id', id);
+      if (error) {
+        console.error(`[Supabase Error] Failed to delete internship ${id}:`, error.message);
+        throw new Error(`Database error deleting internship: ${error.message}`);
+      }
+      return true;
+    }
+  }
+
+  if (isDemoModeAllowed()) {
+    const list = getLocal<Internship[]>(STORAGE_KEYS.INTERNSHIPS, INITIAL_INTERNSHIPS);
+    const updated = list.filter((i) => i.id !== id);
+    setLocal(STORAGE_KEYS.INTERNSHIPS, updated);
+    return true;
+  }
+
+  return false;
+}
+
+export async function archiveInternship(
+  id: string,
+  options?: { client?: SupabaseClient }
+): Promise<Internship | null> {
+  return updateInternship(id, { publication_status: 'archived' }, options);
+}
+
+export async function verifyInternship(
+  id: string,
+  notes?: string,
+  options?: { client?: SupabaseClient }
+): Promise<Internship | null> {
+  const updates: Partial<Internship> = {
+    verification_status: 'official_verified',
+    last_verified_at: new Date().toISOString(),
+    verification_notes: notes || 'Verified by administrator.',
+  };
+  return updateInternship(id, updates, options);
 }
 
 // ------------------------------------------------------------------------------

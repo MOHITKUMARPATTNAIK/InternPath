@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     preferred_locations TEXT[] DEFAULT '{}',
     min_stipend_preference NUMERIC DEFAULT 0,
     duration_preference TEXT,
-    role TEXT NOT NULL DEFAULT 'student' CHECK (role IN ('student', 'admin')),
+    role TEXT NOT NULL DEFAULT 'student' CHECK (role IN ('student', 'admin', 'owner')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -356,7 +356,7 @@ RETURNS BOOLEAN AS $$
 BEGIN
     RETURN EXISTS (
         SELECT 1 FROM public.profiles
-        WHERE id = auth.uid() AND role = 'admin'
+        WHERE id = auth.uid() AND role IN ('admin', 'owner')
     );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -365,7 +365,7 @@ CREATE OR REPLACE FUNCTION public.enforce_profile_role_integrity()
 RETURNS TRIGGER AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
-        IF NEW.role = 'admin' AND NOT public.is_admin() AND current_user <> 'service_role' AND current_user <> 'postgres' THEN
+        IF NEW.role IN ('admin', 'owner') AND NOT public.is_admin() AND current_user <> 'service_role' AND current_user <> 'postgres' THEN
             NEW.role := 'student';
         END IF;
         IF NEW.role IS NULL THEN

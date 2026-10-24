@@ -4,6 +4,7 @@ import React, { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { isUserAdmin } from '@/types';
 import { StatusBanner } from '@/components/ui/StatusBanner';
 import { Navbar } from '@/components/layout/Navbar';
 import { Footer } from '@/components/layout/Footer';
@@ -81,7 +82,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   // If a student account attempts to access admin routes: 403 Forbidden screen
-  if (pathname.startsWith('/admin') && user && user.role !== 'admin') {
+  if (pathname.startsWith('/admin') && user && !isUserAdmin(user.role)) {
     return (
       <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
         <StatusBanner />

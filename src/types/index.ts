@@ -177,6 +177,12 @@ export type InstitutionType =
   | 'medical_college'
   | 'other';
 
+export type UserRole = 'student' | 'admin' | 'owner';
+
+export function isUserAdmin(role?: string | null): boolean {
+  return role === 'admin' || role === 'owner';
+}
+
 export interface UserProfile {
   id: string;
   display_name: string;
@@ -198,7 +204,7 @@ export interface UserProfile {
   preferred_locations: string[];
   min_stipend_preference?: number | null;
   duration_preference?: string;
-  role: 'student' | 'admin';
+  role: UserRole;
   created_at?: string;
   updated_at?: string;
 }

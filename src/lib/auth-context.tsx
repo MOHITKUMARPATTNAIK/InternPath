@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
-import { UserProfile } from '@/types';
+import { UserProfile, UserRole } from '@/types';
 import {
   createClient,
   getSupabaseDiagnostics,
@@ -13,7 +13,7 @@ export interface AuthUser {
   id: string;
   email: string;
   display_name: string;
-  role: 'student' | 'admin';
+  role: UserRole;
 }
 
 export interface AuthContextType {
@@ -84,7 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.warn('Profile retrieval notice:', profileErr.message);
       }
 
-      const role = (userProfile?.role as 'student' | 'admin') || 'student';
+      const role = (userProfile?.role as UserRole) || 'student';
       const fallbackDisplayName =
         authUserObj.user_metadata?.display_name ||
         authUserObj.email?.split('@')[0] ||
@@ -274,7 +274,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('id', data.user.id)
         .maybeSingle();
 
-      const role = (userProfile?.role as 'student' | 'admin') || 'student';
+      const role = (userProfile?.role as UserRole) || 'student';
       const fallbackDisplayName =
         data.user.user_metadata?.display_name || data.user.email?.split('@')[0] || 'Student User';
 

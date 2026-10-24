@@ -10,6 +10,7 @@ import {
   Report,
   PublicationStatus,
   CollectionFrequency,
+  isUserAdmin,
 } from '@/types';
 import {
   getInternships,
@@ -18,7 +19,12 @@ import {
   getReports,
   createInternship,
   updateInternship,
+  deleteInternship,
+  archiveInternship,
+  verifyInternship,
   createSource,
+  updateSource,
+  deleteSource,
   runSourceCheck,
   runAllDueSources,
   toggleSourceEnabled,
@@ -49,6 +55,10 @@ import {
   Play,
   History,
   Power,
+  Edit2,
+  Trash2,
+  Archive,
+  Award,
 } from 'lucide-react';
 
 export default function AdminDashboardPage() {
@@ -107,6 +117,17 @@ export default function AdminDashboardPage() {
   });
   const [sourceError, setSourceError] = useState<string | null>(null);
 
+  // Edit Internship Modal State
+  const [showEditInternshipModal, setShowEditInternshipModal] = useState(false);
+  const [editingInternshipData, setEditingInternshipData] = useState<Partial<Internship> | null>(null);
+
+  // Edit Source Modal State
+  const [showEditSourceModal, setShowEditSourceModal] = useState(false);
+  const [editingSourceData, setEditingSourceData] = useState<Partial<Source> | null>(null);
+
+  // Status Filter for Internships Table
+  const [internshipStatusFilter, setInternshipStatusFilter] = useState<string>('all');
+
   const [runningSourceId, setRunningSourceId] = useState<string | null>(null);
   const [checkingLinkId, setCheckingLinkId] = useState<string | null>(null);
   const [checkingAllLinks, setCheckingAllLinks] = useState(false);
@@ -129,7 +150,7 @@ export default function AdminDashboardPage() {
     setCheckingAllLinks(true);
     try {
       const summary = await validateAllInternshipLinks();
-      const updated = await getInternships();
+      const updated = await getInternships(undefined, { includeAllStatuses: true });
       setInternships(updated);
       alert(`Validated ${summary.updated} listings. All link health statuses refreshed.`);
     } finally {
@@ -139,7 +160,7 @@ export default function AdminDashboardPage() {
 
   const loadAll = async () => {
     const [allInts, allSrcs, allRuns, allReps, allQueue, allLogs] = await Promise.all([
-      getInternships(),
+      getInternships(undefined, { includeAllStatuses: true }),
       getSources(),
       getCollectionRuns(),
       getReports(),
@@ -155,11 +176,13 @@ export default function AdminDashboardPage() {
   };
 
   useEffect(() => {
-    loadAll();
-  }, []);
+    if (user && isUserAdmin(user.role)) {
+      loadAll();
+    }
+  }, [user]);
 
   // Access Protection Check
-  if (!user || user.role !== 'admin') {
+  if (!user || !isUserAdmin(user.role)) {
     return (
       <div className="max-w-md mx-auto py-24 px-4 text-center space-y-4">
         <div className="w-14 h-14 bg-rose-50 rounded-2xl flex items-center justify-center text-rose-600 mx-auto border border-rose-200">
@@ -197,6 +220,102 @@ export default function AdminDashboardPage() {
     setInternships((prev) =>
       prev.map((i) => (i.id === id ? { ...i, publication_status: newStatus } : i))
     );
+  };
+
+  // Edit Internship
+  const handleEditInternship = (item: Internship) => {
+    setEditingInternshipData({ ...item });
+    setShowEditInternshipModal(true);
+  };
+
+  const handleSaveEditedInternship = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingInternshipData || !editingInternshipData.id) return;
+    try {
+      const updated = await updateInternship(editingInternshipData.id, editingInternshipData);
+      if (updated) {
+        setInternships((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
+        setShowEditInternshipModal(false);
+        setEditingInternshipData(null);
+        alert('Internship listing updated successfully!');
+      }
+    } catch (err: unknown) {
+      alert(`Failed to update internship: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  // Archive Internship
+  const handleArchiveInternship = async (id: string) => {
+    if (!confirm('Archive this internship? It will no longer be visible to students in public listings.')) return;
+    try {
+      const updated = await archiveInternship(id);
+      if (updated) {
+        setInternships((prev) => prev.map((i) => (i.id === id ? updated : i)));
+        alert('Internship moved to archived status.');
+      }
+    } catch (err: unknown) {
+      alert(`Error archiving internship: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  // Human Verification of Internship
+  const handleVerifyInternship = async (id: string) => {
+    const notes = prompt('Enter verification notes / confirmation details:', 'Verified via official institutional notification.') || undefined;
+    try {
+      const updated = await verifyInternship(id, notes);
+      if (updated) {
+        setInternships((prev) => prev.map((i) => (i.id === id ? updated : i)));
+        alert('Internship marked as officially verified!');
+      }
+    } catch (err: unknown) {
+      alert(`Error verifying internship: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  // Delete Internship
+  const handleDeleteInternship = async (id: string, title: string) => {
+    if (!confirm(`Are you sure you want to permanently delete "${title}"? This cannot be undone.`)) return;
+    try {
+      await deleteInternship(id);
+      setInternships((prev) => prev.filter((i) => i.id !== id));
+      alert('Internship permanently deleted.');
+    } catch (err: unknown) {
+      alert(`Error deleting internship: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  // Edit Source
+  const handleEditSource = (src: Source) => {
+    setEditingSourceData({ ...src });
+    setShowEditSourceModal(true);
+  };
+
+  const handleSaveEditedSource = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSourceData || !editingSourceData.id) return;
+    try {
+      const updated = await updateSource(editingSourceData.id, editingSourceData);
+      if (updated) {
+        setSources((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+        setShowEditSourceModal(false);
+        setEditingSourceData(null);
+        alert('Source updated successfully!');
+      }
+    } catch (err: unknown) {
+      alert(`Failed to update source: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  // Delete Source
+  const handleDeleteSource = async (id: string, name: string) => {
+    if (!confirm(`Are you sure you want to delete source "${name}"? Opportunities previously collected will remain unless separately deleted.`)) return;
+    try {
+      await deleteSource(id);
+      setSources((prev) => prev.filter((s) => s.id !== id));
+      alert('Source deleted from registry.');
+    } catch (err: unknown) {
+      alert(`Error deleting source: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   // Run Collector Check on a single source
@@ -350,6 +469,9 @@ export default function AdminDashboardPage() {
               <Shield className="w-5 h-5" />
             </div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Admin & Verification Console</h1>
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-400/20 text-amber-300 border border-amber-400/30">
+              Clearance: {user?.role || 'admin'}
+            </span>
           </div>
           <p className="text-xs text-slate-400 max-w-xl leading-relaxed">
             Manage trusted Indian institutional sources, review and publish opportunities, monitor data collectors,
@@ -481,6 +603,27 @@ export default function AdminDashboardPage() {
             </div>
           </div>
 
+          {/* Status Filter Bar */}
+          <div className="flex flex-wrap items-center gap-1.5 text-xs bg-slate-100 p-1 rounded-xl">
+            {(['all', 'published', 'pending_review', 'draft', 'expired', 'archived'] as const).map((st) => (
+              <button
+                key={st}
+                onClick={() => setInternshipStatusFilter(st)}
+                className={`px-3 py-1.5 rounded-lg font-semibold capitalize transition ${
+                  internshipStatusFilter === st
+                    ? 'bg-white text-indigo-700 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {st.replace('_', ' ')} (
+                {st === 'all'
+                  ? internships.length
+                  : internships.filter((i) => i.publication_status === st).length}
+                )
+              </button>
+            ))}
+          </div>
+
           <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-600">
@@ -497,7 +640,13 @@ export default function AdminDashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {internships.map((item) => (
+                  {internships
+                    .filter(
+                      (item) =>
+                        internshipStatusFilter === 'all' ||
+                        item.publication_status === internshipStatusFilter
+                    )
+                    .map((item) => (
                     <tr key={item.id} className="hover:bg-slate-50 transition">
                       <td className="py-3 px-4 max-w-xs font-semibold text-slate-900">
                         <Link href={`/internships/${item.id}`} className="hover:text-indigo-600">
@@ -548,8 +697,27 @@ export default function AdminDashboardPage() {
                           onClick={() => handleCheckLink(item.id)}
                           disabled={checkingLinkId === item.id}
                           className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-slate-700 text-[11px] font-medium disabled:opacity-50"
+                          title="Verify link reachable"
                         >
                           {checkingLinkId === item.id ? 'Checking...' : 'Check Link'}
+                        </button>
+                        {item.verification_status !== 'official_verified' && (
+                          <button
+                            onClick={() => handleVerifyInternship(item.id)}
+                            className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded text-[11px] font-semibold border border-amber-200 inline-flex items-center gap-1"
+                            title="Officially human-verify this listing"
+                          >
+                            <Award className="w-3 h-3" />
+                            <span>Verify</span>
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleEditInternship(item)}
+                          className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-[11px] font-semibold border border-indigo-200 inline-flex items-center gap-1"
+                          title="Edit internship details"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                          <span>Edit</span>
                         </button>
                         {item.publication_status === 'published' ? (
                           <button
@@ -566,6 +734,23 @@ export default function AdminDashboardPage() {
                             Publish
                           </button>
                         )}
+                        {item.publication_status !== 'archived' && (
+                          <button
+                            onClick={() => handleArchiveInternship(item.id)}
+                            className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[11px] font-medium inline-flex items-center gap-1"
+                            title="Archive listing"
+                          >
+                            <Archive className="w-3 h-3" />
+                            <span>Archive</span>
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDeleteInternship(item.id, item.title)}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition"
+                          title="Delete opportunity"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                         <a
                           href={item.official_application_url}
                           target="_blank"
@@ -818,16 +1003,31 @@ export default function AdminDashboardPage() {
                               })
                             : 'On-demand'}
                         </td>
-                        <td className="py-3 px-4 text-right">
+                        <td className="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
                           <button
                             onClick={() => handleRunCollector(src.id)}
                             disabled={runningSourceId === src.id}
                             className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-[11px] font-semibold border border-indigo-200 disabled:opacity-50"
+                            title="Trigger collector check"
                           >
                             <RefreshCw
                               className={`w-3 h-3 ${runningSourceId === src.id ? 'animate-spin' : ''}`}
                             />
                             <span>{runningSourceId === src.id ? 'Checking...' : 'Check Now'}</span>
+                          </button>
+                          <button
+                            onClick={() => handleEditSource(src)}
+                            className="p-1 text-slate-400 hover:text-indigo-600 rounded hover:bg-indigo-50 transition"
+                            title="Edit source details"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteSource(src.id, src.name)}
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition"
+                            title="Delete source"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </td>
                       </tr>
@@ -1438,6 +1638,357 @@ export default function AdminDashboardPage() {
                 Close Audit View
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT INTERNSHIP */}
+      {showEditInternshipModal && editingInternshipData && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 text-slate-900 border border-slate-200 my-8 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-indigo-600" />
+                <h3 className="font-bold text-base text-slate-900">Edit Internship Listing</h3>
+              </div>
+              <button
+                onClick={() => setShowEditInternshipModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditedInternship} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block font-semibold text-slate-700 mb-1">Internship Title</label>
+                  <input
+                    type="text"
+                    value={editingInternshipData.title || ''}
+                    onChange={(e) =>
+                      setEditingInternshipData({ ...editingInternshipData, title: e.target.value })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Organization / Institution</label>
+                  <input
+                    type="text"
+                    value={editingInternshipData.organization || ''}
+                    onChange={(e) =>
+                      setEditingInternshipData({ ...editingInternshipData, organization: e.target.value })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Department</label>
+                  <input
+                    type="text"
+                    value={editingInternshipData.department || ''}
+                    onChange={(e) =>
+                      setEditingInternshipData({ ...editingInternshipData, department: e.target.value })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Publication Status</label>
+                  <select
+                    value={editingInternshipData.publication_status || 'published'}
+                    onChange={(e) =>
+                      setEditingInternshipData({
+                        ...editingInternshipData,
+                        publication_status: e.target.value as PublicationStatus,
+                      })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg bg-white text-slate-800 capitalize"
+                  >
+                    <option value="published">Published</option>
+                    <option value="draft">Draft</option>
+                    <option value="pending_review">Pending Review</option>
+                    <option value="expired">Expired</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Verification Status</label>
+                  <select
+                    value={editingInternshipData.verification_status || 'source_checked'}
+                    onChange={(e) =>
+                      setEditingInternshipData({
+                        ...editingInternshipData,
+                        verification_status: e.target.value as any,
+                      })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg bg-white text-slate-800"
+                  >
+                    <option value="official_verified">Official Verified (Human Inspected)</option>
+                    <option value="source_checked">Source Checked (Automated Pipeline)</option>
+                    <option value="pending_verification">Pending Verification</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Stipend Amount (INR)</label>
+                  <input
+                    type="number"
+                    value={editingInternshipData.stipend_amount ?? ''}
+                    onChange={(e) =>
+                      setEditingInternshipData({
+                        ...editingInternshipData,
+                        stipend_amount: e.target.value ? Number(e.target.value) : null,
+                      })
+                    }
+                    placeholder="e.g. 15000"
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Application Deadline</label>
+                  <input
+                    type="date"
+                    value={editingInternshipData.application_deadline ? editingInternshipData.application_deadline.slice(0, 10) : ''}
+                    onChange={(e) =>
+                      setEditingInternshipData({
+                        ...editingInternshipData,
+                        application_deadline: e.target.value,
+                      })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Location</label>
+                  <input
+                    type="text"
+                    value={editingInternshipData.location || ''}
+                    onChange={(e) =>
+                      setEditingInternshipData({ ...editingInternshipData, location: e.target.value })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Duration</label>
+                  <input
+                    type="text"
+                    value={editingInternshipData.duration || ''}
+                    onChange={(e) =>
+                      setEditingInternshipData({ ...editingInternshipData, duration: e.target.value })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block font-semibold text-slate-700 mb-1">Official Application URL</label>
+                  <input
+                    type="url"
+                    value={editingInternshipData.official_application_url || ''}
+                    onChange={(e) =>
+                      setEditingInternshipData({
+                        ...editingInternshipData,
+                        official_application_url: e.target.value,
+                      })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800 font-mono text-[11px]"
+                    required
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block font-semibold text-slate-700 mb-1">Verification / Administrative Notes</label>
+                  <textarea
+                    rows={2}
+                    value={editingInternshipData.verification_notes || ''}
+                    onChange={(e) =>
+                      setEditingInternshipData({
+                        ...editingInternshipData,
+                        verification_notes: e.target.value,
+                      })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800"
+                  />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="block font-semibold text-slate-700 mb-1">Description</label>
+                  <textarea
+                    rows={3}
+                    value={editingInternshipData.description || ''}
+                    onChange={(e) =>
+                      setEditingInternshipData({ ...editingInternshipData, description: e.target.value })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="pt-3 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowEditInternshipModal(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-xs"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT SOURCE */}
+      {showEditSourceModal && editingSourceData && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 text-slate-900 border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-indigo-600" />
+                <h3 className="font-bold text-base text-slate-900">Edit Monitored Source</h3>
+              </div>
+              <button
+                onClick={() => setShowEditSourceModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditedSource} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Institution Name</label>
+                <input
+                  type="text"
+                  value={editingSourceData.name || ''}
+                  onChange={(e) =>
+                    setEditingSourceData({ ...editingSourceData, name: e.target.value })
+                  }
+                  className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Official Domain</label>
+                <input
+                  type="text"
+                  value={editingSourceData.official_domain || ''}
+                  onChange={(e) =>
+                    setEditingSourceData({ ...editingSourceData, official_domain: e.target.value })
+                  }
+                  className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800 font-mono text-[11px]"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Category</label>
+                  <select
+                    value={editingSourceData.source_category || 'IIT'}
+                    onChange={(e) =>
+                      setEditingSourceData({
+                        ...editingSourceData,
+                        source_category: e.target.value as Source['source_category'],
+                      })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg bg-white text-slate-800"
+                  >
+                    {SOURCE_CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Monitoring Method</label>
+                  <select
+                    value={editingSourceData.monitoring_method || 'HTML Scraping'}
+                    onChange={(e) =>
+                      setEditingSourceData({
+                        ...editingSourceData,
+                        monitoring_method: e.target.value as Source['monitoring_method'],
+                      })
+                    }
+                    className="w-full py-2 px-3 border border-slate-200 rounded-lg bg-white text-slate-800"
+                  >
+                    <option value="HTML Scraping">HTML Scraping</option>
+                    <option value="API">API</option>
+                    <option value="RSS">RSS Feed</option>
+                    <option value="Manual Verification">Manual Verification</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Opportunity Portal URL</label>
+                <input
+                  type="url"
+                  value={editingSourceData.opportunity_page_url || ''}
+                  onChange={(e) =>
+                    setEditingSourceData({
+                      ...editingSourceData,
+                      opportunity_page_url: e.target.value,
+                    })
+                  }
+                  className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800 font-mono text-[11px]"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Verification Notes</label>
+                <textarea
+                  rows={2}
+                  value={editingSourceData.verification_notes || ''}
+                  onChange={(e) =>
+                    setEditingSourceData({
+                      ...editingSourceData,
+                      verification_notes: e.target.value,
+                    })
+                  }
+                  className="w-full py-2 px-3 border border-slate-200 rounded-lg text-slate-800"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowEditSourceModal(false)}
+                  className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold shadow-xs"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
