@@ -110,7 +110,7 @@ export default function SignupPage() {
       setConfirmationEmail(email);
       setRequiresConfirmation(true);
     } else {
-      router.push('/profile');
+      router.push('/internships');
     }
   };
 

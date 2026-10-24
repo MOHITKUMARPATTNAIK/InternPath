@@ -84,9 +84,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
       } else {
-        // Fallback to local storage state for seamless development/testing
-        const storedUser = localStorage.getItem('internpath_demo_user');
-        const storedProfile = localStorage.getItem('internpath_demo_profile');
+        // Safe demo session lifecycle:
+        // Clear any legacy demo keys from localStorage so a fresh browser session is never auto-logged in.
+        // Demo sessions are held strictly in sessionStorage (tab/window session duration).
+        try {
+          localStorage.removeItem('internpath_demo_user');
+          localStorage.removeItem('internpath_demo_profile');
+        } catch {
+          // Ignore localStorage errors
+        }
+
+        let storedUser: string | null = null;
+        let storedProfile: string | null = null;
+        try {
+          storedUser = sessionStorage.getItem('internpath_demo_user');
+          storedProfile = sessionStorage.getItem('internpath_demo_profile');
+        } catch {
+          // Ignore sessionStorage errors
+        }
+
         if (storedUser) {
           try {
             setUser(JSON.parse(storedUser));
@@ -163,8 +179,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
       setUser(authUser);
       setProfile(userProf);
-      localStorage.setItem('internpath_demo_user', JSON.stringify(authUser));
-      localStorage.setItem('internpath_demo_profile', JSON.stringify(userProf));
+      sessionStorage.setItem('internpath_demo_user', JSON.stringify(authUser));
+      sessionStorage.setItem('internpath_demo_profile', JSON.stringify(userProf));
       setLoading(false);
       return {};
     }
@@ -235,8 +251,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       };
       setUser(authUser);
       setProfile(newProf);
-      localStorage.setItem('internpath_demo_user', JSON.stringify(authUser));
-      localStorage.setItem('internpath_demo_profile', JSON.stringify(newProf));
+      sessionStorage.setItem('internpath_demo_user', JSON.stringify(authUser));
+      sessionStorage.setItem('internpath_demo_profile', JSON.stringify(newProf));
       setLoading(false);
       return {};
     }
@@ -248,9 +264,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (supabase) {
         await supabase.auth.signOut();
       }
-    } else {
+    }
+    // Safely clear only demo session keys, preserving saved internships and application data
+    try {
+      sessionStorage.removeItem('internpath_demo_user');
+      sessionStorage.removeItem('internpath_demo_profile');
       localStorage.removeItem('internpath_demo_user');
       localStorage.removeItem('internpath_demo_profile');
+    } catch {
+      // Ignore storage cleanup issues in sandbox
     }
     setUser(null);
     setProfile(null);
@@ -266,14 +288,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error) return { error: error.message };
       }
     } else {
-      localStorage.setItem('internpath_demo_profile', JSON.stringify(updated));
+      sessionStorage.setItem('internpath_demo_profile', JSON.stringify(updated));
     }
     setProfile(updated);
     if (data.display_name && data.display_name !== user.display_name) {
       const updatedUser = { ...user, display_name: data.display_name };
       setUser(updatedUser);
       if (!isConfigured) {
-        localStorage.setItem('internpath_demo_user', JSON.stringify(updatedUser));
+        sessionStorage.setItem('internpath_demo_user', JSON.stringify(updatedUser));
       }
     }
     return {};
@@ -281,16 +303,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const switchDemoRole = (newRole: 'student' | 'admin') => {
     if (!user) return;
+    if (isConfigured) return; // Strict security: never allow demo role switching in production Supabase mode
     const updatedUser: AuthUser = { ...user, role: newRole };
     const updatedProfile: UserProfile = profile
       ? { ...profile, role: newRole }
       : { ...DEFAULT_DEMO_PROFILE, role: newRole };
     setUser(updatedUser);
     setProfile(updatedProfile);
-    if (!isConfigured) {
-      localStorage.setItem('internpath_demo_user', JSON.stringify(updatedUser));
-      localStorage.setItem('internpath_demo_profile', JSON.stringify(updatedProfile));
-    }
+    sessionStorage.setItem('internpath_demo_user', JSON.stringify(updatedUser));
+    sessionStorage.setItem('internpath_demo_profile', JSON.stringify(updatedProfile));
   };
 
   const loginAsDemo = (role: 'student' | 'admin' = 'student') => {
@@ -316,8 +337,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(authUser);
     setProfile(userProf);
     if (!isConfigured) {
-      localStorage.setItem('internpath_demo_user', JSON.stringify(authUser));
-      localStorage.setItem('internpath_demo_profile', JSON.stringify(userProf));
+      sessionStorage.setItem('internpath_demo_user', JSON.stringify(authUser));
+      sessionStorage.setItem('internpath_demo_profile', JSON.stringify(userProf));
     }
   };
 

@@ -198,7 +198,7 @@ export function Futuristic3DBackground({
 
   return (
     <div
-      className={`relative min-h-[92vh] flex items-center justify-center overflow-hidden bg-slate-950 ${className}`}
+      className={`relative min-h-screen w-full flex items-center justify-center overflow-x-hidden overflow-y-auto bg-slate-950 ${className}`}
     >
       {/* Dynamic 3D Liquid Light Canvas Background */}
       <canvas

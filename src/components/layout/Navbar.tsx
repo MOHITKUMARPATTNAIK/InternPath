@@ -20,7 +20,7 @@ export function Navbar() {
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
 
   const navLinks = [
-    { label: 'Home', href: '/' },
+    ...(user ? [] : [{ label: 'Home', href: '/' }]),
     { label: 'Explore Internships', href: '/internships' },
     { label: 'Categories', href: '/categories' },
     { label: 'Saved Internships', href: '/saved', requiresAuth: true },
@@ -38,7 +38,7 @@ export function Navbar() {
         <div className="flex justify-between h-16 items-center">
           {/* Logo & Platform Name */}
           <div className="flex items-center gap-8">
-            <Link href="/" className="flex items-center gap-2.5 group">
+            <Link href={user ? '/internships' : '/'} className="flex items-center gap-2.5 group">
               <div className="w-9 h-9 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-black text-lg shadow-sm group-hover:bg-indigo-700 transition">
                 IP
               </div>

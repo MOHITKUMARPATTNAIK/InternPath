@@ -1,107 +1,156 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Internship, ScoredInternship } from '@/types';
-import { getInternships, getRecommendedInternships } from '@/lib/data-service';
 import { useAuth } from '@/lib/auth-context';
-import { InternshipCard } from '@/components/internships/InternshipCard';
+import { signupFormSchema, loginSchema } from '@/lib/validations';
+import { Futuristic3DBackground } from '@/components/auth/Futuristic3DBackground';
 import {
-  Search,
   Sparkles,
+  AlertCircle,
   ArrowRight,
   ShieldCheck,
-  Building2,
-  Calendar,
-  IndianRupee,
-  Compass,
-  CheckCircle,
-  Award,
+  Eye,
+  EyeOff,
+  CheckCircle2,
+  MailCheck,
+  Lock,
+  User,
+  Mail,
+  Zap,
+  LogIn,
+  UserPlus,
 } from 'lucide-react';
 
-export default function HomePage() {
+export default function RootAuthEntryPage() {
   const router = useRouter();
-  const { user, profile, loading } = useAuth();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [internships, setInternships] = useState<Internship[]>([]);
-  const [recommended, setRecommended] = useState<ScoredInternship[]>([]);
+  const { user, loading: authLoading, signUp, signIn, loginAsDemo } = useAuth();
 
+  // Mode: defaults to 'signup' for the signup-first experience
+  const [mode, setMode] = useState<'signup' | 'signin'>('signup');
+
+  // Signup fields
+  const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [agreeTerms, setAgreeTerms] = useState(false);
+
+  // Signin fields (reuses email & password)
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ [key: string]: string }>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [requiresConfirmation, setRequiresConfirmation] = useState(false);
+  const [confirmationEmail, setConfirmationEmail] = useState('');
+
+  // If already authenticated with a valid real session or explicit demo session, route to /internships
   useEffect(() => {
-    if (!loading && !user) {
-      router.replace('/auth/signup');
+    if (!authLoading && user) {
+      router.replace('/internships');
     }
-  }, [loading, user, router]);
+  }, [user, authLoading, router]);
 
-  useEffect(() => {
-    async function loadData() {
-      const all = await getInternships();
-      setInternships(all);
+  // Dynamic Password Strength Meter
+  const passwordStrength = useMemo(() => {
+    if (!password) return { score: 0, label: '', color: 'bg-slate-700', text: 'text-slate-500' };
+    let score = 0;
+    if (password.length >= 6) score += 1;
+    if (password.length >= 8) score += 1;
+    if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score += 1;
+    if (/[0-9]/.test(password) || /[^A-Za-z0-9]/.test(password)) score += 1;
 
-      if (profile) {
-        const recs = await getRecommendedInternships(profile);
-        setRecommended(recs.slice(0, 3));
-      }
+    switch (score) {
+      case 1:
+        return { score: 25, label: 'Weak', color: 'bg-rose-500', text: 'text-rose-400' };
+      case 2:
+        return { score: 50, label: 'Fair', color: 'bg-amber-500', text: 'text-amber-400' };
+      case 3:
+        return { score: 75, label: 'Good', color: 'bg-cyan-500', text: 'text-cyan-400' };
+      case 4:
+        return { score: 100, label: 'Strong', color: 'bg-emerald-400', text: 'text-emerald-400' };
+      default:
+        return { score: 0, label: '', color: 'bg-slate-700', text: 'text-slate-500' };
     }
-    if (user) {
-      loadData();
-    }
-  }, [profile, user]);
+  }, [password]);
 
-  const handleSearchSubmit = (e: React.FormEvent) => {
+  const passwordsMatch = confirmPassword.length > 0 && password === confirmPassword;
+
+  // Handle Form Submission (Sign Up or Sign In based on mode)
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (searchQuery.trim()) {
-      router.push(`/internships?search=${encodeURIComponent(searchQuery.trim())}`);
+    if (submitting) return;
+
+    setError(null);
+    setFieldErrors({});
+
+    if (mode === 'signup') {
+      const validation = signupFormSchema.safeParse({
+        displayName,
+        email,
+        password,
+        confirmPassword,
+        agreeTerms,
+      });
+
+      if (!validation.success) {
+        const fieldMap: { [key: string]: string } = {};
+        validation.error.issues.forEach((issue) => {
+          const fieldName = issue.path[0] as string;
+          if (fieldName && !fieldMap[fieldName]) {
+            fieldMap[fieldName] = issue.message;
+          }
+        });
+        setFieldErrors(fieldMap);
+        setError(validation.error.issues[0]?.message || 'Please correct the highlighted errors.');
+        return;
+      }
+
+      setSubmitting(true);
+      const result = await signUp(email, password, displayName);
+      setSubmitting(false);
+
+      if (result.error) {
+        setError(result.error);
+      } else if (result.requiresEmailConfirmation) {
+        setConfirmationEmail(email);
+        setRequiresConfirmation(true);
+      } else {
+        router.push('/internships');
+      }
     } else {
-      router.push('/internships');
+      // Sign In mode
+      const validation = loginSchema.safeParse({ email, password });
+      if (!validation.success) {
+        setError(validation.error.issues[0]?.message || 'Please check your input');
+        return;
+      }
+
+      setSubmitting(true);
+      const result = await signIn(email, password);
+      setSubmitting(false);
+
+      if (result.error) {
+        setError(result.error);
+      } else {
+        router.push('/internships');
+      }
     }
   };
 
-  // Sections derivation
-  const recentlyAdded = internships.slice(0, 3);
+  // Explicit opt-in Demo handler
+  const handleQuickDemo = (role: 'student' | 'admin') => {
+    loginAsDemo(role);
+    router.push(role === 'admin' ? '/admin' : '/internships');
+  };
 
-  const closingSoon = internships
-    .filter((i) => {
-      if (!i.application_deadline) return false;
-      const diffDays =
-        (new Date(i.application_deadline).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24);
-      return diffDays > 0 && diffDays <= 45;
-    })
-    .sort((a, b) => new Date(a.application_deadline!).getTime() - new Date(b.application_deadline!).getTime())
-    .slice(0, 3);
-
-  const paidOpportunities = internships
-    .filter((i) => i.stipend_status === 'paid' && (i.stipend_amount || 0) > 0)
-    .sort((a, b) => (b.stipend_amount || 0) - (a.stipend_amount || 0))
-    .slice(0, 3);
-
-  const govtAndInstitutes = internships
-    .filter((i) => {
-      const org = i.organization.toLowerCase();
-      return (
-        org.includes('iit') ||
-        org.includes('iisc') ||
-        org.includes('niti aayog') ||
-        org.includes('ministry') ||
-        org.includes('rbi') ||
-        org.includes('csir')
-      );
-    })
-    .slice(0, 3);
-
-  const quickFilterChips = [
-    { label: 'Paid Internships', href: '/internships?stipendStatus=paid', icon: IndianRupee },
-    { label: 'IITs & Premier Institutes', href: '/internships?sourceCategory=IIT', icon: Building2 },
-    { label: 'Government Portals', href: '/internships?sourceCategory=Government+Ministry', icon: Award },
-    { label: 'IISc & Research Labs', href: '/internships?sourceCategory=IISc+/+IISER', icon: ShieldCheck },
-    { label: 'Remote / Virtual', href: '/internships?format=remote', icon: Compass },
-    { label: 'Upcoming Deadlines', href: '/internships?deadlineFilter=30days', icon: Calendar },
-    { label: 'Unpaid / Research Credit', href: '/internships?stipendStatus=unpaid', icon: CheckCircle },
-  ];
-
-  if (loading || !user) {
+  // While checking auth state or if already authenticated (redirecting to /internships)
+  if (authLoading || user) {
     return (
-      <div className="min-h-[85vh] flex items-center justify-center bg-slate-950">
+      <div className="min-h-screen w-full flex items-center justify-center bg-slate-950">
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 border-3 border-cyan-400 border-t-transparent rounded-full animate-spin shadow-[0_0_20px_rgba(6,182,212,0.5)]" />
           <p className="text-xs text-cyan-300 font-semibold tracking-wider uppercase">Loading InternPath...</p>
@@ -110,309 +159,455 @@ export default function HomePage() {
     );
   }
 
-  return (
-    <div className="space-y-14 pb-16">
-      {/* Hero Section */}
-      <section className="relative bg-gradient-to-b from-indigo-950 via-slate-900 to-slate-900 text-white pt-16 pb-20 px-4 sm:px-6 lg:px-8 overflow-hidden">
-        {/* Subtle Background Pattern */}
-        <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#818cf8_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none" />
-
-        <div className="relative max-w-4xl mx-auto text-center space-y-6">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-900/60 border border-indigo-700/60 text-indigo-300 text-xs font-semibold">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>100% Direct Official Sources • Verified Indian Institutions</span>
+  // If Supabase returned an email confirmation requirement
+  if (requiresConfirmation) {
+    return (
+      <Futuristic3DBackground>
+        <div className="w-full max-w-md p-8 rounded-3xl bg-slate-900/80 backdrop-blur-2xl border border-cyan-500/30 shadow-[0_0_60px_rgba(6,182,212,0.2)] text-center space-y-6">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shadow-[0_0_30px_rgba(6,182,212,0.3)] animate-pulse">
+            <MailCheck className="w-8 h-8" />
           </div>
 
-          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-tight">
-            Discover Your Next Internship.{' '}
-            <span className="bg-gradient-to-r from-indigo-300 via-sky-300 to-emerald-300 bg-clip-text text-transparent">
-              Build Your Future.
-            </span>
-          </h1>
+          <div className="space-y-2">
+            <h2 className="text-2xl font-black text-white tracking-tight">
+              Verify Your Email
+            </h2>
+            <p className="text-sm text-slate-300">
+              We have dispatched a verification link to:
+            </p>
+            <p className="font-mono text-sm font-bold text-cyan-400 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700/70 inline-block">
+              {confirmationEmail}
+            </p>
+          </div>
 
-          <p className="text-slate-300 text-base sm:text-lg max-w-2xl mx-auto leading-relaxed">
-            Find trusted internship opportunities from leading Indian institutions, government departments,
-            research organizations, and companies — all in one place.
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Please click the link in your inbox to confirm your account and begin discovering verified internships across IITs, NITs, and premier research centers.
           </p>
 
-          {/* Prominent Search Bar */}
-          <form
-            onSubmit={handleSearchSubmit}
-            className="max-w-2xl mx-auto flex flex-col sm:flex-row items-center gap-2 bg-white/10 p-2 rounded-2xl border border-white/20 shadow-xl backdrop-blur-md"
-          >
-            <div className="relative flex-1 w-full">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by role, institution (e.g. IIT Madras, NITI Aayog), or skill..."
-                className="w-full pl-11 pr-4 py-3 bg-white/90 text-slate-900 text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400 font-medium placeholder:text-slate-400"
-              />
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setRequiresConfirmation(false);
+                setMode('signin');
+              }}
+              className="inline-flex items-center justify-center w-full py-3 px-4 rounded-xl font-bold text-xs text-slate-900 bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 transition shadow-[0_0_20px_rgba(6,182,212,0.3)] cursor-pointer"
+            >
+              Return to Sign In
+            </button>
+          </div>
+        </div>
+      </Futuristic3DBackground>
+    );
+  }
+
+  return (
+    <Futuristic3DBackground>
+      <div className="w-full max-w-lg my-auto py-6">
+        {/* Glassmorphic 3D Futuristic Card */}
+        <div className="rounded-3xl bg-slate-900/80 backdrop-blur-2xl border border-cyan-500/30 shadow-[0_0_60px_rgba(6,182,212,0.18)] p-6 sm:p-9 space-y-6 transition-all duration-300 hover:border-cyan-400/50">
+          
+          {/* Header */}
+          <div className="text-center space-y-2">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-[11px] font-bold text-cyan-400 tracking-wide uppercase mb-1">
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Next-Gen Discovery</span>
             </div>
+
+            <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+              {mode === 'signup' ? 'Create Your InternPath Account' : 'Sign In to InternPath'}
+            </h1>
+
+            <p className="text-xs sm:text-sm text-slate-400">
+              {mode === 'signup'
+                ? 'Start discovering trusted internship opportunities across India.'
+                : 'Access your personalized recommendations, saved internships, and tracker.'}
+            </p>
+          </div>
+
+          {/* Mode Switcher: Obvious Toggle between Sign Up and Sign In */}
+          <div className="flex rounded-xl bg-slate-950/80 p-1 border border-cyan-500/20">
+            <button
+              type="button"
+              onClick={() => {
+                setMode('signup');
+                setError(null);
+                setFieldErrors({});
+              }}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer ${
+                mode === 'signup'
+                  ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_15px_rgba(6,182,212,0.3)]'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Create Account</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('signin');
+                setError(null);
+                setFieldErrors({});
+              }}
+              className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer ${
+                mode === 'signin'
+                  ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-[0_0_15px_rgba(6,182,212,0.3)]'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>Sign In</span>
+            </button>
+          </div>
+
+          {/* Explicit Opt-in Demo Bar (Never automatic) */}
+          <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-cyan-500/20 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-cyan-400" />
+                Instant Demo Evaluation
+              </span>
+              <span className="text-[10px] text-cyan-400/80 font-medium">Explicit opt-in preview</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleQuickDemo('student')}
+                className="py-1.5 px-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500/20 text-left text-cyan-300 transition flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
+              >
+                <User className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Demo Student</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickDemo('admin')}
+                className="py-1.5 px-3 rounded-xl bg-violet-500/10 border border-violet-500/30 hover:bg-violet-500/20 text-left text-violet-300 transition flex items-center gap-1.5 text-xs font-semibold cursor-pointer"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-violet-400" />
+                <span>Demo Admin</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Alert Error Box */}
+          {error && (
+            <div className="p-3.5 rounded-2xl bg-rose-950/50 border border-rose-500/40 text-rose-200 text-xs flex items-start gap-2.5 animate-in fade-in">
+              <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+              <span className="leading-snug">{error}</span>
+            </div>
+          )}
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="space-y-4 text-xs" noValidate>
+            
+            {/* Full Name (Sign Up only) */}
+            {mode === 'signup' && (
+              <div>
+                <label className="block font-semibold text-slate-300 mb-1.5">
+                  Full Name
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                    <User className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="text"
+                    value={displayName}
+                    onChange={(e) => {
+                      setDisplayName(e.target.value);
+                      if (fieldErrors.displayName) {
+                        setFieldErrors((prev) => ({ ...prev, displayName: '' }));
+                      }
+                    }}
+                    placeholder="e.g. Aarav Sharma"
+                    className={`w-full py-2.5 pl-10 pr-3.5 bg-slate-950/80 border rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition ${
+                      fieldErrors.displayName
+                        ? 'border-rose-500 focus:border-rose-500'
+                        : 'border-slate-800 focus:border-cyan-500'
+                    }`}
+                    required
+                  />
+                </div>
+                {fieldErrors.displayName && (
+                  <p className="mt-1 text-[11px] text-rose-400 font-medium">
+                    {fieldErrors.displayName}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Email Address */}
+            <div>
+              <label className="block font-semibold text-slate-300 mb-1.5">
+                Email Address
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <Mail className="w-4 h-4" />
+                </div>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (fieldErrors.email) {
+                      setFieldErrors((prev) => ({ ...prev, email: '' }));
+                    }
+                  }}
+                  placeholder="student@university.ac.in"
+                  className={`w-full py-2.5 pl-10 pr-3.5 bg-slate-950/80 border rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition ${
+                    fieldErrors.email
+                      ? 'border-rose-500 focus:border-rose-500'
+                      : 'border-slate-800 focus:border-cyan-500'
+                  }`}
+                  required
+                />
+              </div>
+              {fieldErrors.email && (
+                <p className="mt-1 text-[11px] text-rose-400 font-medium">
+                  {fieldErrors.email}
+                </p>
+              )}
+            </div>
+
+            {/* Password */}
+            <div>
+              <div className="flex justify-between items-center mb-1.5">
+                <label className="font-semibold text-slate-300">
+                  Password
+                </label>
+                {mode === 'signup' && passwordStrength.label && (
+                  <span className={`text-[10px] font-bold ${passwordStrength.text}`}>
+                    Strength: {passwordStrength.label}
+                  </span>
+                )}
+                {mode === 'signin' && (
+                  <Link
+                    href="/auth/reset-password"
+                    className="text-[11px] text-cyan-400 hover:text-cyan-300 font-medium hover:underline transition"
+                  >
+                    Forgot Password?
+                  </Link>
+                )}
+              </div>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <Lock className="w-4 h-4" />
+                </div>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (fieldErrors.password) {
+                      setFieldErrors((prev) => ({ ...prev, password: '' }));
+                    }
+                  }}
+                  placeholder={mode === 'signup' ? 'Min. 6 characters' : '••••••••'}
+                  className={`w-full py-2.5 pl-10 pr-10 bg-slate-950/80 border rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition ${
+                    fieldErrors.password
+                      ? 'border-rose-500 focus:border-rose-500'
+                      : 'border-slate-800 focus:border-cyan-500'
+                  }`}
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-cyan-400 transition"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+
+              {/* Password Strength Meter Bar (Signup only) */}
+              {mode === 'signup' && password && (
+                <div className="mt-2 space-y-1">
+                  <div className="h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-300 ${passwordStrength.color}`}
+                      style={{ width: `${passwordStrength.score}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              {fieldErrors.password && (
+                <p className="mt-1 text-[11px] text-rose-400 font-medium">
+                  {fieldErrors.password}
+                </p>
+              )}
+            </div>
+
+            {/* Confirm Password (Sign Up only) */}
+            {mode === 'signup' && (
+              <div>
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="font-semibold text-slate-300">
+                    Confirm Password
+                  </label>
+                  {confirmPassword && (
+                    <span
+                      className={`text-[10px] font-bold flex items-center gap-1 ${
+                        passwordsMatch ? 'text-emerald-400' : 'text-rose-400'
+                      }`}
+                    >
+                      {passwordsMatch ? (
+                        <>
+                          <CheckCircle2 className="w-3 h-3" /> Passwords match
+                        </>
+                      ) : (
+                        'Passwords do not match'
+                      )}
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => {
+                      setConfirmPassword(e.target.value);
+                      if (fieldErrors.confirmPassword) {
+                        setFieldErrors((prev) => ({ ...prev, confirmPassword: '' }));
+                      }
+                    }}
+                    placeholder="Re-enter your password"
+                    className={`w-full py-2.5 pl-10 pr-10 bg-slate-950/80 border rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/40 transition ${
+                      fieldErrors.confirmPassword
+                        ? 'border-rose-500 focus:border-rose-500'
+                        : 'border-slate-800 focus:border-cyan-500'
+                    }`}
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-cyan-400 transition"
+                    aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                  >
+                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {fieldErrors.confirmPassword && (
+                  <p className="mt-1 text-[11px] text-rose-400 font-medium">
+                    {fieldErrors.confirmPassword}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Terms of Service & Privacy Policy Agreement (Sign Up only) */}
+            {mode === 'signup' && (
+              <div className="pt-1">
+                <label className="flex items-start gap-2.5 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={agreeTerms}
+                    onChange={(e) => {
+                      setAgreeTerms(e.target.checked);
+                      if (fieldErrors.agreeTerms) {
+                        setFieldErrors((prev) => ({ ...prev, agreeTerms: '' }));
+                      }
+                    }}
+                    className="mt-0.5 w-4 h-4 rounded border-slate-700 bg-slate-950 text-cyan-500 focus:ring-cyan-500/30 focus:ring-offset-0"
+                  />
+                  <span className="text-[11px] text-slate-300 leading-snug group-hover:text-slate-200">
+                    I agree to the{' '}
+                    <Link
+                      href="/terms"
+                      target="_blank"
+                      className="text-cyan-400 hover:underline font-semibold"
+                    >
+                      Terms of Service
+                    </Link>{' '}
+                    and{' '}
+                    <Link
+                      href="/privacy"
+                      target="_blank"
+                      className="text-cyan-400 hover:underline font-semibold"
+                    >
+                      Privacy Policy
+                    </Link>
+                    .
+                  </span>
+                </label>
+                {fieldErrors.agreeTerms && (
+                  <p className="mt-1 text-[11px] text-rose-400 font-medium">
+                    {fieldErrors.agreeTerms}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Primary CTA Submit Button */}
             <button
               type="submit"
-              className="w-full sm:w-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm rounded-xl transition flex items-center justify-center gap-2 shadow-lg"
+              disabled={submitting}
+              className="w-full mt-2 py-3 px-4 rounded-xl font-bold text-xs text-slate-950 bg-gradient-to-r from-cyan-400 via-blue-500 to-violet-500 hover:from-cyan-300 hover:via-blue-400 hover:to-violet-400 transition-all duration-200 shadow-[0_0_25px_rgba(6,182,212,0.35)] flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
             >
-              <span>Search</span>
-              <ArrowRight className="w-4 h-4" />
+              {submitting ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />
+                  <span>{mode === 'signup' ? 'Creating Account...' : 'Signing In...'}</span>
+                </>
+              ) : (
+                <>
+                  <span>{mode === 'signup' ? 'Create Account' : 'Sign In'}</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           </form>
 
-          {/* Action CTAs */}
-          <div className="flex flex-wrap items-center justify-center gap-4 pt-2">
-            <Link
-              href="/internships"
-              className="px-5 py-2.5 rounded-xl bg-white text-slate-900 font-semibold text-xs hover:bg-slate-100 transition shadow-sm flex items-center gap-1.5"
-            >
-              <span>Explore All Internships</span>
-              <ArrowRight className="w-3.5 h-3.5 text-indigo-600" />
-            </Link>
-
-            <Link
-              href={user ? '/profile' : '/auth/signup'}
-              className="px-5 py-2.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 font-semibold text-xs transition"
-            >
-              {user ? 'View My Profile' : 'Create Your Student Profile'}
-            </Link>
-          </div>
-
-          {/* Trust Statement */}
-          <p className="text-[11px] text-slate-400 max-w-lg mx-auto pt-2">
-            Every listing directs students straight to verified institutional domains (.ac.in, .gov.in, .res.in).
-            No application fees, no intermediary spam.
-          </p>
-        </div>
-      </section>
-
-      {/* Quick Filters Pill Bar */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-8 relative z-20">
-        <div className="bg-white rounded-2xl shadow-lg border border-slate-200/80 p-4 sm:p-5">
-          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-3 flex items-center gap-1.5">
-            <Compass className="w-4 h-4 text-indigo-600" />
-            <span>Popular Fast Filters</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {quickFilterChips.map((chip) => {
-              const Icon = chip.icon;
-              return (
-                <Link
-                  key={chip.label}
-                  href={chip.href}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-50 text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 border border-slate-200 transition"
-                >
-                  <Icon className="w-3.5 h-3.5 text-slate-500" />
-                  <span>{chip.label}</span>
-                </Link>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {/* Featured Section 1: Personalized Recommendations (If user is logged in & has profile) */}
-      {recommended.length > 0 && (
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="bg-gradient-to-r from-indigo-50 via-sky-50 to-emerald-50 rounded-2xl p-6 sm:p-8 border border-indigo-100/80 shadow-xs">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 gap-2 border-b border-indigo-200/60">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-indigo-600" />
-                  <h2 className="text-xl font-bold text-slate-900">Recommended for You</h2>
-                </div>
-                <p className="text-xs text-slate-600 mt-1">
-                  Personalized based on your academic field ({profile?.academic_background}), {profile?.academic_year},{' '}
-                  and skills.
-                </p>
-              </div>
-
-              <Link
-                href="/profile"
-                className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-700 hover:text-indigo-900"
-              >
-                <span>Edit Profile Preferences</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </Link>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-6">
-              {recommended.map(({ internship, evaluation, matchReasons }) => (
-                <InternshipCard
-                  key={internship.id}
-                  internship={internship}
-                  highlightReason={matchReasons?.[0]}
-                  evaluation={evaluation}
-                />
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* Featured Section 2: Recently Added Opportunities */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-bold text-slate-900 tracking-tight">Recently Added Internships</h2>
-            <p className="text-xs text-slate-500">Freshly verified opportunities from official Indian institution portals.</p>
-          </div>
-          <Link
-            href="/internships?sortBy=newest"
-            className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
-          >
-            <span>View All</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
-        </div>
-
-        {recentlyAdded.length === 0 ? (
-          <div className="p-8 text-center bg-white rounded-xl border border-slate-200 text-xs text-slate-500">
-            No recently added opportunities found.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {recentlyAdded.map((item) => (
-              <InternshipCard key={item.id} internship={item} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Featured Section 3: Closing Soon (Urgent Deadlines) */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
-              <h2 className="text-xl font-bold text-slate-900 tracking-tight">Closing Soon</h2>
-            </div>
-            <p className="text-xs text-slate-500">Upcoming application cut-offs — apply on the official portals before deadlines lapse.</p>
-          </div>
-          <Link
-            href="/internships?deadlineFilter=30days&sortBy=deadline"
-            className="text-xs font-semibold text-amber-700 hover:text-amber-900 flex items-center gap-1"
-          >
-            <span>View Closing Soon</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
-        </div>
-
-        {closingSoon.length === 0 ? (
-          <div className="p-8 text-center bg-white rounded-xl border border-slate-200 text-xs text-slate-500">
-            No deadlines closing within 45 days at this moment.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {closingSoon.map((item) => (
-              <InternshipCard key={item.id} internship={item} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Featured Section 4: Paid & Stipend Supported */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-bold text-slate-900 tracking-tight">Paid Research & Industry Fellowships</h2>
-            <p className="text-xs text-slate-500">Opportunities with explicitly confirmed stipends and student honorariums.</p>
-          </div>
-          <Link
-            href="/internships?stipendStatus=paid"
-            className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
-          >
-            <span>View All Paid</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
-        </div>
-
-        {paidOpportunities.length === 0 ? (
-          <div className="p-8 text-center bg-white rounded-xl border border-slate-200 text-xs text-slate-500">
-            No paid opportunities found.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {paidOpportunities.map((item) => (
-              <InternshipCard key={item.id} internship={item} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Featured Section 5: Government & Premier Institutes */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-              Government Ministries & Premier National Labs
-            </h2>
-            <p className="text-xs text-slate-500">
-              National bodies including NITI Aayog, MEA, CSIR labs, RBI, and premier IITs.
-            </p>
-          </div>
-          <Link
-            href="/categories"
-            className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
-          >
-            <span>Explore Categories</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {govtAndInstitutes.map((item) => (
-            <InternshipCard key={item.id} internship={item} />
-          ))}
-        </div>
-      </section>
-
-      {/* Trust & Transparency Pillar Section */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-        <div className="bg-slate-900 text-white rounded-2xl p-8 sm:p-10 relative overflow-hidden">
-          <div className="relative z-10 max-w-3xl space-y-4">
-            <span className="text-indigo-400 text-xs font-bold uppercase tracking-widest">
-              Built on Trust & Institutional Accuracy
+          {/* Reassurance Badge */}
+          <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 flex items-center gap-2.5">
+            <ShieldCheck className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+            <span>
+              100% verified institutional opportunities. Free for Indian undergraduate students.
             </span>
-            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight">
-              Why Indian Students Rely on InternPath
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-4 text-xs text-slate-300">
-              <div className="space-y-1.5">
-                <div className="font-semibold text-white flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  <span>Direct Official Portals</span>
-                </div>
-                <p className="leading-relaxed text-slate-400">
-                  We never create intermediate application forms. Every listing directs you straight to the official
-                  university or government domain.
-                </p>
-              </div>
+          </div>
 
-              <div className="space-y-1.5">
-                <div className="font-semibold text-white flex items-center gap-1.5">
-                  <CheckCircle className="w-4 h-4 text-sky-400" />
-                  <span>Strict Eligibility First</span>
-                </div>
-                <p className="leading-relaxed text-slate-400">
-                  We filter by year of study, degree, and exact academic disciplines so you never waste time on
-                  opportunities you aren&apos;t eligible for.
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="font-semibold text-white flex items-center gap-1.5">
-                  <Award className="w-4 h-4 text-amber-400" />
-                  <span>Zero Fabricated Data</span>
-                </div>
-                <p className="leading-relaxed text-slate-400">
-                  Every stipend, deadline, and eligibility criterion is extracted from authentic notification PDFs and
-                  institutional announcements.
-                </p>
-              </div>
-            </div>
+          {/* Obvious Option to Switch between Sign Up and Sign In */}
+          <div className="pt-2 text-center text-xs text-slate-400 border-t border-slate-800/80">
+            {mode === 'signup' ? (
+              <span>
+                Already have an account?{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('signin');
+                    setError(null);
+                    setFieldErrors({});
+                  }}
+                  className="text-cyan-400 font-bold hover:text-cyan-300 hover:underline transition cursor-pointer"
+                >
+                  Sign In
+                </button>
+              </span>
+            ) : (
+              <span>
+                Don&apos;t have an account?{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('signup');
+                    setError(null);
+                    setFieldErrors({});
+                  }}
+                  className="text-cyan-400 font-bold hover:text-cyan-300 hover:underline transition cursor-pointer"
+                >
+                  Create Account
+                </button>
+              </span>
+            )}
           </div>
         </div>
-      </section>
-    </div>
+      </div>
+    </Futuristic3DBackground>
   );
 }

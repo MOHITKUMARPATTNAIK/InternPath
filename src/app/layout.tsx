@@ -2,9 +2,7 @@ import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '@/lib/auth-context';
-import { Navbar } from '@/components/layout/Navbar';
-import { Footer } from '@/components/layout/Footer';
-import { StatusBanner } from '@/components/ui/StatusBanner';
+import { AppShell } from '@/components/layout/AppShell';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -30,12 +28,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.className} min-h-screen flex flex-col bg-slate-50 text-slate-900 antialiased`}>
+      <body className={`${inter.className} min-h-screen flex flex-col bg-slate-950 text-slate-900 antialiased`}>
         <AuthProvider>
-          <StatusBanner />
-          <Navbar />
-          <div className="flex-1 flex flex-col">{children}</div>
-          <Footer />
+          <AppShell>{children}</AppShell>
         </AuthProvider>
       </body>
     </html>
