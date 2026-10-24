@@ -2,7 +2,12 @@
 
 import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
 import { UserProfile } from '@/types';
-import { createClient, isSupabaseConfigured } from './supabase/client';
+import {
+  createClient,
+  getSupabaseDiagnostics,
+  isDemoModeAllowed,
+  SupabaseDiagnostics,
+} from './supabase/client';
 
 export interface AuthUser {
   id: string;
@@ -11,17 +16,18 @@ export interface AuthUser {
   role: 'student' | 'admin';
 }
 
-interface AuthContextType {
+export interface AuthContextType {
   user: AuthUser | null;
   profile: UserProfile | null;
   loading: boolean;
   isConfigured: boolean;
+  configStatus: SupabaseDiagnostics;
   signIn: (email: string, password?: string) => Promise<{ error?: string }>;
   signUp: (email: string, password?: string, displayName?: string) => Promise<{ error?: string; requiresEmailConfirmation?: boolean }>;
   signOut: () => Promise<{ error?: string }>;
   updateProfile: (data: Partial<UserProfile>) => Promise<{ error?: string }>;
-  switchDemoRole: (role: 'student' | 'admin') => void;
-  loginAsDemo: (role?: 'student' | 'admin') => void;
+  switchDemoRole: (role: 'student' | 'admin') => { error?: string };
+  loginAsDemo: (role?: 'student' | 'admin') => { error?: string };
   resetPassword: (email: string) => Promise<{ error?: string; message?: string }>;
 }
 
@@ -57,74 +63,113 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const isConfigured = isSupabaseConfigured();
+  const configStatus = getSupabaseDiagnostics();
+  const isConfigured = configStatus.configured;
   const isLoggingOutRef = useRef<boolean>(false);
 
   useEffect(() => {
     async function initAuth() {
-      if (isConfigured) {
-        const supabase = createClient();
-        if (supabase) {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.user) {
-            const { data: userProfile } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', session.user.id)
-              .single();
-
-            const role = (userProfile?.role as 'student' | 'admin') || 'student';
-            const authUser: AuthUser = {
-              id: session.user.id,
-              email: session.user.email || '',
-              display_name: userProfile?.display_name || session.user.user_metadata?.display_name || 'Student User',
-              role,
-            };
-            setUser(authUser);
-            setProfile(userProfile || null);
-          }
-        }
-      } else {
-        // Safe demo session lifecycle:
-        // Clear any legacy demo keys from localStorage so a fresh browser session is never auto-logged in.
-        // Demo sessions are held strictly in sessionStorage (tab/window session duration).
-        try {
-          localStorage.removeItem('internpath_demo_user');
-          localStorage.removeItem('internpath_demo_profile');
-        } catch {
-          // Ignore localStorage errors
-        }
-
-        let storedUser: string | null = null;
-        let storedProfile: string | null = null;
-        try {
-          storedUser = sessionStorage.getItem('internpath_demo_user');
-          storedProfile = sessionStorage.getItem('internpath_demo_profile');
-        } catch {
-          // Ignore sessionStorage errors
-        }
-
-        if (storedUser) {
+      setLoading(true);
+      try {
+        if (isConfigured) {
+          // In real Supabase mode, purge any legacy demo session artifacts
           try {
-            setUser(JSON.parse(storedUser));
+            sessionStorage.removeItem('internpath_demo_user');
+            sessionStorage.removeItem('internpath_demo_profile');
+            localStorage.removeItem('internpath_demo_user');
+            localStorage.removeItem('internpath_demo_profile');
           } catch {
+            // Ignore storage cleanup issues
+          }
+
+          const supabase = createClient();
+          if (supabase) {
+            const { data: { session }, error } = await supabase.auth.getSession();
+            if (error) {
+              console.error('Supabase getSession error:', error.message);
+              setUser(null);
+              setProfile(null);
+            } else if (session?.user) {
+              const { data: userProfile, error: profileErr } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', session.user.id)
+                .single();
+
+              if (profileErr) {
+                console.warn('Profile retrieval notice:', profileErr.message);
+              }
+
+              const role = (userProfile?.role as 'student' | 'admin') || 'student';
+              const authUser: AuthUser = {
+                id: session.user.id,
+                email: session.user.email || '',
+                display_name: userProfile?.display_name || session.user.user_metadata?.display_name || 'Student User',
+                role,
+              };
+              setUser(authUser);
+              setProfile(userProfile || null);
+            } else {
+              setUser(null);
+              setProfile(null);
+            }
+          } else {
             setUser(null);
-          }
-        } else {
-          setUser(null);
-        }
-
-        if (storedProfile) {
-          try {
-            setProfile(JSON.parse(storedProfile));
-          } catch {
             setProfile(null);
           }
         } else {
-          setProfile(null);
+          // Supabase is not configured
+          // Check if development-only demo mode is explicitly enabled
+          if (isDemoModeAllowed()) {
+            let storedUser: string | null = null;
+            let storedProfile: string | null = null;
+            try {
+              storedUser = sessionStorage.getItem('internpath_demo_user');
+              storedProfile = sessionStorage.getItem('internpath_demo_profile');
+            } catch {
+              // Ignore storage errors
+            }
+
+            if (storedUser) {
+              try {
+                setUser(JSON.parse(storedUser));
+              } catch {
+                setUser(null);
+              }
+            } else {
+              setUser(null);
+            }
+
+            if (storedProfile) {
+              try {
+                setProfile(JSON.parse(storedProfile));
+              } catch {
+                setProfile(null);
+              }
+            } else {
+              setProfile(null);
+            }
+          } else {
+            // Demo mode is not enabled: strictly ensure user is unauthenticated
+            try {
+              sessionStorage.removeItem('internpath_demo_user');
+              sessionStorage.removeItem('internpath_demo_profile');
+              localStorage.removeItem('internpath_demo_user');
+              localStorage.removeItem('internpath_demo_profile');
+            } catch {
+              // Ignore storage cleanup issues
+            }
+            setUser(null);
+            setProfile(null);
+          }
         }
+      } catch (err) {
+        console.error('Auth initialization error:', err);
+        setUser(null);
+        setProfile(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     }
 
     initAuth();
@@ -132,58 +177,81 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = async (email: string, password?: string): Promise<{ error?: string }> => {
     setLoading(true);
-    if (isConfigured) {
-      const supabase = createClient();
-      if (!supabase) return { error: 'Supabase client not available' };
+
+    // Rule: Real authentication requires a configured Supabase backend.
+    // A failed real login or missing database connection must NEVER fabricate a fake account.
+    if (!isConfigured) {
+      setLoading(false);
+      const err =
+        configStatus.helpMessage ||
+        'Authentication is unavailable because Supabase is not configured in .env.local. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY and restart the dev server.';
+      return { error: err };
+    }
+
+    const supabase = createClient();
+    if (!supabase) {
+      setLoading(false);
+      return { error: 'Unable to initialize Supabase client. Please check your configuration.' };
+    }
+
+    try {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim(),
         password: password || '',
       });
+
       if (error) {
         setLoading(false);
-        return { error: error.message };
+        const lowerMsg = (error.message || '').toLowerCase();
+        // Generic error message for bad credentials to prevent email enumeration
+        if (
+          lowerMsg.includes('invalid login credentials') ||
+          lowerMsg.includes('invalid credentials') ||
+          lowerMsg.includes('user not found') ||
+          lowerMsg.includes('wrong password')
+        ) {
+          return { error: 'Invalid email or password. Please verify your credentials and try again.' };
+        }
+        if (lowerMsg.includes('email not confirmed')) {
+          return { error: 'Your email address is not verified yet. Please check your inbox for the confirmation link.' };
+        }
+        if (lowerMsg.includes('fetch') || lowerMsg.includes('network') || lowerMsg.includes('connection')) {
+          return { error: 'Unable to connect to the authentication service. Please check your network connection.' };
+        }
+        return { error: error.message || 'Invalid email or password.' };
       }
-      if (data.user) {
-        const { data: userProfile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', data.user.id)
-          .single();
 
-        const role = (userProfile?.role as 'student' | 'admin') || 'student';
-        const authUser: AuthUser = {
-          id: data.user.id,
-          email: data.user.email || email,
-          display_name: userProfile?.display_name || 'Student User',
-          role,
-        };
-        setUser(authUser);
-        setProfile(userProfile);
+      // Check that both session and user are present and valid
+      if (!data.session || !data.user) {
+        setLoading(false);
+        return { error: 'Authentication could not establish a valid session. Please verify your email or credentials.' };
       }
-      setLoading(false);
-      return {};
-    } else {
-      // Demo authentication simulation
-      const isAdmin = email.toLowerCase().includes('admin');
+
+      // Successful Supabase credential authentication
+      const { data: userProfile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', data.user.id)
+        .single();
+
+      const role = (userProfile?.role as 'student' | 'admin') || 'student';
       const authUser: AuthUser = {
-        id: isAdmin ? 'usr-admin-demo-99' : 'usr-student-demo-01',
-        email,
-        display_name: isAdmin ? 'Admin Evaluator' : (email.split('@')[0] || 'Aarav Sharma'),
-        role: isAdmin ? 'admin' : 'student',
+        id: data.user.id,
+        email: data.user.email || email.trim(),
+        display_name: userProfile?.display_name || data.user.user_metadata?.display_name || 'Student User',
+        role,
       };
-      const userProf: UserProfile = {
-        ...DEFAULT_DEMO_PROFILE,
-        id: authUser.id,
-        email,
-        display_name: authUser.display_name,
-        role: authUser.role,
-      };
+
       setUser(authUser);
-      setProfile(userProf);
-      sessionStorage.setItem('internpath_demo_user', JSON.stringify(authUser));
-      sessionStorage.setItem('internpath_demo_profile', JSON.stringify(userProf));
+      setProfile(userProfile || null);
       setLoading(false);
       return {};
+    } catch (networkOrUnknownError: any) {
+      setLoading(false);
+      console.error('Sign-in network or service exception:', networkOrUnknownError);
+      return {
+        error: 'Unable to communicate with the authentication server. Please check your connection and try again.',
+      };
     }
   };
 
@@ -193,29 +261,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     displayName?: string
   ): Promise<{ error?: string; requiresEmailConfirmation?: boolean }> => {
     setLoading(true);
-    if (isConfigured) {
-      const supabase = createClient();
-      if (!supabase) return { error: 'Supabase client not available' };
+
+    // Rule: Real registration requires a configured Supabase backend.
+    // Missing configuration must NEVER fabricate a fake account.
+    if (!isConfigured) {
+      setLoading(false);
+      const err =
+        configStatus.helpMessage ||
+        'Account registration is unavailable because Supabase is not configured in .env.local. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY and restart the dev server.';
+      return { error: err };
+    }
+
+    const supabase = createClient();
+    if (!supabase) {
+      setLoading(false);
+      return { error: 'Unable to initialize Supabase client. Please check your configuration.' };
+    }
+
+    try {
       const { data, error } = await supabase.auth.signUp({
-        email,
+        email: email.trim(),
         password: password || '',
         options: {
-          data: { display_name: displayName || email.split('@')[0] },
+          data: { display_name: displayName || email.trim().split('@')[0] },
         },
       });
+
       if (error) {
         setLoading(false);
+        const lowerMsg = (error.message || '').toLowerCase();
+        if (lowerMsg.includes('user already registered')) {
+          return { error: 'An account with this email address already exists. Please sign in instead.' };
+        }
         return { error: error.message };
       }
+
       if (data.user && !data.session) {
         setLoading(false);
         return { requiresEmailConfirmation: true };
       }
-      if (data.user) {
+
+      if (data.user && data.session) {
         const newProfile: UserProfile = {
           id: data.user.id,
-          email,
-          display_name: displayName || email.split('@')[0],
+          email: data.user.email || email.trim(),
+          display_name: displayName || email.trim().split('@')[0],
           academic_background: 'Engineering and Technology',
           primary_interest: 'General',
           secondary_interests: [],
@@ -224,38 +314,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           preferred_locations: [],
           role: 'student',
         };
+
         await supabase.from('profiles').insert(newProfile);
+
         setUser({
           id: data.user.id,
-          email,
+          email: data.user.email || email.trim(),
           display_name: newProfile.display_name,
           role: 'student',
         });
         setProfile(newProfile);
+        setLoading(false);
+        return {};
       }
+
       setLoading(false);
-      return {};
-    } else {
-      // Demo mode sign up
-      const authUser: AuthUser = {
-        id: 'usr-' + Date.now(),
-        email,
-        display_name: displayName || email.split('@')[0],
-        role: 'student',
-      };
-      const newProf: UserProfile = {
-        ...DEFAULT_DEMO_PROFILE,
-        id: authUser.id,
-        email,
-        display_name: authUser.display_name,
-        role: 'student',
-      };
-      setUser(authUser);
-      setProfile(newProf);
-      sessionStorage.setItem('internpath_demo_user', JSON.stringify(authUser));
-      sessionStorage.setItem('internpath_demo_profile', JSON.stringify(newProf));
+      return { error: 'Account creation could not be completed. Please try again.' };
+    } catch (networkOrUnknownError: any) {
       setLoading(false);
-      return {};
+      console.error('Sign-up network or service exception:', networkOrUnknownError);
+      return {
+        error: 'Unable to connect to the registration service. Please check your connection and try again.',
+      };
     }
   };
 
@@ -318,43 +398,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.from('profiles').upsert(updated);
         if (error) return { error: error.message };
       }
-    } else {
+    } else if (isDemoModeAllowed()) {
       sessionStorage.setItem('internpath_demo_profile', JSON.stringify(updated));
     }
+
     setProfile(updated);
     if (safeData.display_name && safeData.display_name !== user.display_name) {
       const updatedUser = { ...user, display_name: safeData.display_name };
       setUser(updatedUser);
-      if (!isConfigured) {
+      if (!isConfigured && isDemoModeAllowed()) {
         sessionStorage.setItem('internpath_demo_user', JSON.stringify(updatedUser));
       }
     }
     return {};
   };
 
-  const switchDemoRole = (newRole: 'student' | 'admin') => {
-    // Demo functionality is strictly forbidden in production or when Supabase is configured
-    if (process.env.NODE_ENV === 'production' || isConfigured) {
-      console.warn('Security Notice: Demo role switching is disabled in production environments.');
-      return;
+  const switchDemoRole = (newRole: 'student' | 'admin'): { error?: string } => {
+    if (!isDemoModeAllowed()) {
+      return { error: 'Demo role switching is forbidden in production or configured environments.' };
     }
-    if (!user) return;
+    if (!user) return { error: 'No active demo session to switch.' };
     const updatedUser: AuthUser = { ...user, role: newRole };
     const updatedProfile: UserProfile = profile
       ? { ...profile, role: newRole }
       : { ...DEFAULT_DEMO_PROFILE, role: newRole };
     setUser(updatedUser);
     setProfile(updatedProfile);
-    sessionStorage.setItem('internpath_demo_user', JSON.stringify(updatedUser));
-    sessionStorage.setItem('internpath_demo_profile', JSON.stringify(updatedProfile));
+    try {
+      sessionStorage.setItem('internpath_demo_user', JSON.stringify(updatedUser));
+      sessionStorage.setItem('internpath_demo_profile', JSON.stringify(updatedProfile));
+    } catch {}
+    return {};
   };
 
-  const loginAsDemo = (role: 'student' | 'admin' = 'student') => {
-    // Demo functionality is strictly forbidden in production or when Supabase is configured
-    if (process.env.NODE_ENV === 'production' || isConfigured) {
-      console.warn('Security Notice: Demo login is disabled in production environments.');
-      return;
+  const loginAsDemo = (role: 'student' | 'admin' = 'student'): { error?: string } => {
+    if (!isDemoModeAllowed()) {
+      if (process.env.NODE_ENV === 'production') {
+        const msg = 'Security violation: Demo mode is strictly disabled in production builds.';
+        console.warn(msg);
+        return { error: msg };
+      }
+      if (isConfigured) {
+        const msg = 'Demo mode is disabled when a real Supabase database is connected.';
+        console.warn(msg);
+        return { error: msg };
+      }
+      const msg =
+        'Demo mode is disabled. To enable it for local development, set NEXT_PUBLIC_ENABLE_DEMO_MODE=true in .env.local and restart the server.';
+      console.warn(msg);
+      return { error: msg };
     }
+
     const isAdm = role === 'admin';
     const authUser: AuthUser = isAdm
       ? {
@@ -376,20 +470,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     setUser(authUser);
     setProfile(userProf);
-    sessionStorage.setItem('internpath_demo_user', JSON.stringify(authUser));
-    sessionStorage.setItem('internpath_demo_profile', JSON.stringify(userProf));
+    try {
+      sessionStorage.setItem('internpath_demo_user', JSON.stringify(authUser));
+      sessionStorage.setItem('internpath_demo_profile', JSON.stringify(userProf));
+    } catch {}
+    return {};
   };
 
   const resetPassword = async (email: string): Promise<{ error?: string; message?: string }> => {
     if (isConfigured) {
       const supabase = createClient();
       if (supabase) {
-        const { error } = await supabase.auth.resetPasswordForEmail(email);
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
         if (error) return { error: error.message };
         return { message: 'Password reset link sent to your registered email address.' };
       }
     }
-    return { message: 'Demo Mode: In a production environment, an official reset link is sent to ' + email };
+    return {
+      error:
+        configStatus.helpMessage ||
+        'Password reset is unavailable because Supabase is not configured in .env.local.',
+    };
   };
 
   return (
@@ -399,6 +500,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         profile,
         loading,
         isConfigured,
+        configStatus,
         signIn,
         signUp,
         signOut,

@@ -7,8 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "npx tsx scripts/test-internpath.ts && npx tsx scripts/test-collection-pipeline.ts && npx tsx scripts/test-auth-signup-flow.ts",
-    "test:auth": "npx tsx scripts/test-auth-signup-flow.ts"
+    "test": "npx tsx scripts/test-internpath.ts && npx tsx scripts/test-collection-pipeline.ts && npx tsx scripts/test-auth-signup-flow.ts && npx tsx scripts/test-credential-auth-security.ts",
+    "test:auth": "npx tsx scripts/test-auth-signup-flow.ts && npx tsx scripts/test-credential-auth-security.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

@@ -15,13 +15,14 @@ import {
   EyeOff,
   Lock,
   Mail,
+  Database,
 } from 'lucide-react';
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectUrl = searchParams.get('redirect') || '/internships';
-  const { user, loading: authLoading, signIn } = useAuth();
+  const { user, loading: authLoading, signIn, isConfigured } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -79,6 +80,19 @@ function LoginForm() {
               Access your personalized recommendations, saved internships, and tracker.
             </p>
           </div>
+
+          {/* Supabase Configuration Diagnostic Notice */}
+          {!isConfigured && (
+            <div className="p-3.5 rounded-2xl bg-amber-950/40 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-2.5">
+              <Database className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-semibold text-amber-300">Supabase Backend Required</p>
+                <p className="text-[11px] text-amber-200/80 leading-relaxed">
+                  Real authentication requires setting <code className="bg-amber-900/50 px-1 py-0.5 rounded text-amber-100 font-mono">NEXT_PUBLIC_SUPABASE_URL</code> and <code className="bg-amber-900/50 px-1 py-0.5 rounded text-amber-100 font-mono">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in <code className="bg-amber-900/50 px-1 py-0.5 rounded text-amber-100 font-mono">.env.local</code>.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Alert Error Box */}
           {error && (
