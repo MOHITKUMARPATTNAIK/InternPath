@@ -13,7 +13,9 @@ import {
   CollectionFrequency,
 } from '@/types';
 import { INITIAL_SOURCES, INITIAL_INTERNSHIPS, INITIAL_COLLECTION_RUNS } from '@/data/seedData';
-import { createClient, isSupabaseConfigured } from './supabase/client';
+import { createClient, isSupabaseConfigured, isDemoModeAllowed } from './supabase/client';
+import { generateUUID, isValidUUID } from './uuid';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { evaluateEligibility } from './eligibility-engine';
 import { getComputedApplicationStatus, isDeadlineClosingSoon, isDeadlineExpired } from './date-utils';
 import { validateApplicationUrl } from './link-validator';
@@ -69,87 +71,141 @@ export function initializeSeedData(): void {
 // ------------------------------------------------------------------------------
 // SOURCES
 // ------------------------------------------------------------------------------
-export async function getSources(): Promise<Source[]> {
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+export async function getSources(options?: { client?: SupabaseClient }): Promise<Source[]> {
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
       const { data, error } = await supabase.from('sources').select('*').order('name');
-      if (!error && data && data.length > 0) return data as Source[];
+      if (error) {
+        console.error('[Supabase Error] Failed to fetch sources:', error.message);
+      } else if (data) {
+        return data as Source[];
+      }
     }
   }
-  initializeSeedData();
-  return getLocal<Source[]>(STORAGE_KEYS.SOURCES, INITIAL_SOURCES);
+
+  // Only fall back to local seed data when Supabase is NOT configured and demo mode is permitted
+  if (isDemoModeAllowed()) {
+    initializeSeedData();
+    return getLocal<Source[]>(STORAGE_KEYS.SOURCES, INITIAL_SOURCES);
+  }
+
+  return [];
 }
 
-export async function getSourceById(id: string): Promise<Source | null> {
-  const sources = await getSources();
+export async function getSourceById(
+  id: string,
+  options?: { client?: SupabaseClient }
+): Promise<Source | null> {
+  const sources = await getSources(options);
   return sources.find((s) => s.id === id) || null;
 }
 
-export async function createSource(sourceData: Omit<Source, 'id' | 'created_at' | 'updated_at'>): Promise<Source> {
+export async function createSource(
+  sourceData: Omit<Source, 'id' | 'created_at' | 'updated_at'> & { id?: string },
+  options?: { client?: SupabaseClient }
+): Promise<Source> {
   const newSource: Source = {
     ...sourceData,
-    id: 'src-' + Date.now(),
+    id: sourceData.id && isValidUUID(sourceData.id) ? sourceData.id : generateUUID(),
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
-      const { data } = await supabase.from('sources').insert(newSource).select().single();
+      const { data, error } = await supabase.from('sources').insert(newSource).select().single();
+      if (error) {
+        console.error('[Supabase Error] Failed to create source:', error.message);
+        throw new Error(`Database error creating source: ${error.message}`);
+      }
       if (data) return data as Source;
     }
   }
 
-  const sources = await getSources();
-  const updated = [newSource, ...sources];
-  setLocal(STORAGE_KEYS.SOURCES, updated);
-  return newSource;
+  if (isDemoModeAllowed()) {
+    const sources = await getSources(options);
+    const updated = [newSource, ...sources];
+    setLocal(STORAGE_KEYS.SOURCES, updated);
+    return newSource;
+  }
+
+  throw new Error('Supabase is not configured and demo mode is disabled.');
 }
 
-export async function updateSource(id: string, updates: Partial<Source>): Promise<Source | null> {
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+export async function updateSource(
+  id: string,
+  updates: Partial<Source>,
+  options?: { client?: SupabaseClient }
+): Promise<Source | null> {
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
-      const { data } = await supabase.from('sources').update(updates).eq('id', id).select().single();
+      const { data, error } = await supabase
+        .from('sources')
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) {
+        console.error(`[Supabase Error] Failed to update source ${id}:`, error.message);
+        throw new Error(`Database error updating source: ${error.message}`);
+      }
       if (data) return data as Source;
     }
   }
 
-  const sources = await getSources();
-  const index = sources.findIndex((s) => s.id === id);
-  if (index === -1) return null;
+  if (isDemoModeAllowed()) {
+    const sources = await getSources(options);
+    const index = sources.findIndex((s) => s.id === id);
+    if (index === -1) return null;
 
-  const updatedSource = { ...sources[index], ...updates, updated_at: new Date().toISOString() };
-  sources[index] = updatedSource;
-  setLocal(STORAGE_KEYS.SOURCES, sources);
-  return updatedSource;
+    const updatedSource = { ...sources[index], ...updates, updated_at: new Date().toISOString() };
+    sources[index] = updatedSource;
+    setLocal(STORAGE_KEYS.SOURCES, sources);
+    return updatedSource;
+  }
+
+  return null;
 }
 
 // ------------------------------------------------------------------------------
 // INTERNSHIPS
 // ------------------------------------------------------------------------------
-export async function getInternships(filters?: Partial<FilterState>): Promise<Internship[]> {
+export async function getInternships(
+  filters?: Partial<FilterState>,
+  options?: { client?: SupabaseClient }
+): Promise<Internship[]> {
   let list: Internship[] = [];
+  let fetchedFromSupabase = false;
 
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
       const { data, error } = await supabase
         .from('internships')
         .select('*')
         .eq('publication_status', 'published')
         .order('published_at', { ascending: false });
-      if (!error && data && data.length > 0) {
+
+      if (error) {
+        console.error('[Supabase Error] Failed to fetch internships:', error.message);
+      } else if (data) {
         list = data as Internship[];
+        fetchedFromSupabase = true;
       }
     }
   }
 
-  if (list.length === 0) {
-    initializeSeedData();
-    list = getLocal<Internship[]>(STORAGE_KEYS.INTERNSHIPS, INITIAL_INTERNSHIPS);
+  // Only fall back to local seed data if Supabase was NOT configured and demo mode is permitted
+  if (!fetchedFromSupabase) {
+    if (isDemoModeAllowed()) {
+      initializeSeedData();
+      list = getLocal<Internship[]>(STORAGE_KEYS.INTERNSHIPS, INITIAL_INTERNSHIPS);
+    } else {
+      list = [];
+    }
   }
 
   // Ensure application_status is computed dynamically using Indian Standard Time
@@ -263,83 +319,136 @@ export async function getInternships(filters?: Partial<FilterState>): Promise<In
   });
 }
 
-export async function getInternshipById(id: string): Promise<Internship | null> {
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+export async function getInternshipById(
+  id: string,
+  options?: { client?: SupabaseClient }
+): Promise<Internship | null> {
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
-      const { data, error } = await supabase.from('internships').select('*').eq('id', id).single();
-      if (!error && data) return data as Internship;
+      const { data, error } = await supabase.from('internships').select('*').eq('id', id).maybeSingle();
+      if (error) {
+        console.error(`[Supabase Error] Failed to fetch internship ${id}:`, error.message);
+      } else if (data) {
+        return {
+          ...data,
+          application_status: getComputedApplicationStatus(data as Internship),
+        } as Internship;
+      }
     }
   }
 
-  const internships = await getInternships();
-  return internships.find((item) => item.id === id) || null;
+  if (isDemoModeAllowed()) {
+    const internships = await getInternships(undefined, options);
+    return internships.find((item) => item.id === id) || null;
+  }
+
+  return null;
 }
 
 export async function createInternship(
-  data: Omit<Internship, 'id' | 'created_at' | 'updated_at'>
+  data: Omit<Internship, 'id' | 'created_at' | 'updated_at'> & { id?: string },
+  options?: { client?: SupabaseClient }
 ): Promise<Internship> {
+  const newId = data.id && isValidUUID(data.id) ? data.id : generateUUID();
+  const now = new Date().toISOString();
   const newInternship: Internship = {
     ...data,
-    id: 'intern-' + Date.now(),
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    published_at: new Date().toISOString(),
-    last_verified_at: new Date().toISOString(),
+    id: newId,
+    created_at: now,
+    updated_at: now,
+    published_at: data.published_at || now,
+    last_verified_at: data.last_verified_at || now,
   };
 
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
-      const { data: inserted } = await supabase.from('internships').insert(newInternship).select().single();
+      const { data: inserted, error } = await supabase
+        .from('internships')
+        .insert(newInternship)
+        .select()
+        .single();
+      if (error) {
+        console.error('[Supabase Error] Failed to create internship:', error.message);
+        throw new Error(`Database error creating internship: ${error.message}`);
+      }
       if (inserted) return inserted as Internship;
     }
   }
 
-  const list = await getInternships();
-  const updated = [newInternship, ...list];
-  setLocal(STORAGE_KEYS.INTERNSHIPS, updated);
-  return newInternship;
+  if (isDemoModeAllowed()) {
+    const list = await getInternships(undefined, options);
+    const updated = [newInternship, ...list];
+    setLocal(STORAGE_KEYS.INTERNSHIPS, updated);
+    return newInternship;
+  }
+
+  throw new Error('Supabase is not configured and demo mode is disabled.');
 }
 
-export async function updateInternship(id: string, updates: Partial<Internship>): Promise<Internship | null> {
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+export async function updateInternship(
+  id: string,
+  updates: Partial<Internship>,
+  options?: { client?: SupabaseClient }
+): Promise<Internship | null> {
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
-      const { data } = await supabase.from('internships').update(updates).eq('id', id).select().single();
+      const { data, error } = await supabase
+        .from('internships')
+        .update({ ...updates, updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .select()
+        .single();
+      if (error) {
+        console.error(`[Supabase Error] Failed to update internship ${id}:`, error.message);
+        throw new Error(`Database error updating internship: ${error.message}`);
+      }
       if (data) return data as Internship;
     }
   }
 
-  const list = await getInternships();
-  const index = list.findIndex((i) => i.id === id);
-  if (index === -1) return null;
+  if (isDemoModeAllowed()) {
+    const list = await getInternships(undefined, options);
+    const index = list.findIndex((i) => i.id === id);
+    if (index === -1) return null;
 
-  const updatedInternship = { ...list[index], ...updates, updated_at: new Date().toISOString() };
-  list[index] = updatedInternship;
-  setLocal(STORAGE_KEYS.INTERNSHIPS, list);
-  return updatedInternship;
+    const updatedInternship = { ...list[index], ...updates, updated_at: new Date().toISOString() };
+    list[index] = updatedInternship;
+    setLocal(STORAGE_KEYS.INTERNSHIPS, list);
+    return updatedInternship;
+  }
+
+  return null;
 }
 
 // ------------------------------------------------------------------------------
 // SAVED INTERNSHIPS
 // ------------------------------------------------------------------------------
-export async function getSavedInternships(userId: string): Promise<SavedInternship[]> {
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+export async function getSavedInternships(
+  userId: string,
+  options?: { client?: SupabaseClient }
+): Promise<SavedInternship[]> {
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
       const { data, error } = await supabase
         .from('saved_internships')
         .select('*, internship:internships(*)')
         .eq('user_id', userId)
         .order('saved_at', { ascending: false });
-      if (!error && data) return data as SavedInternship[];
+      if (error) {
+        console.error('[Supabase Error] Failed to fetch saved internships:', error.message);
+      } else if (data) {
+        return data as SavedInternship[];
+      }
     }
   }
 
   const savedList = getLocal<SavedInternship[]>(STORAGE_KEYS.SAVED, []);
   const userSaved = savedList.filter((s) => s.user_id === userId);
-  const allInternships = await getInternships();
+  const allInternships = await getInternships(undefined, options);
 
   // Attach internship details
   return userSaved.map((s) => ({
@@ -352,10 +461,11 @@ export async function saveInternship(
   userId: string,
   internshipId: string,
   personalStatus: PersonalApplicationStatus = 'Interested',
-  notes?: string
+  notes?: string,
+  options?: { client?: SupabaseClient }
 ): Promise<SavedInternship> {
   const newSaved: SavedInternship = {
-    id: 'save-' + Date.now(),
+    id: generateUUID(),
     user_id: userId,
     internship_id: internshipId,
     personal_status: personalStatus,
@@ -364,14 +474,18 @@ export async function saveInternship(
     updated_at: new Date().toISOString(),
   };
 
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('saved_internships')
         .upsert(newSaved, { onConflict: 'user_id,internship_id' })
         .select('*, internship:internships(*)')
         .single();
+      if (error) {
+        console.error('[Supabase Error] Failed to save internship:', error.message);
+        throw new Error(`Database error saving internship: ${error.message}`);
+      }
       if (data) return data as SavedInternship;
     }
   }
@@ -390,9 +504,13 @@ export async function saveInternship(
   return newSaved;
 }
 
-export async function unsaveInternship(userId: string, internshipId: string): Promise<void> {
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+export async function unsaveInternship(
+  userId: string,
+  internshipId: string,
+  options?: { client?: SupabaseClient }
+): Promise<void> {
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
       await supabase
         .from('saved_internships')
@@ -524,20 +642,25 @@ export async function validateAllInternshipLinks(): Promise<{
 // REPORTS (Listing Feedback)
 // ------------------------------------------------------------------------------
 export async function submitReport(
-  data: Omit<Report, 'id' | 'status' | 'created_at' | 'updated_at'>
+  data: Omit<Report, 'id' | 'status' | 'created_at' | 'updated_at'>,
+  options?: { client?: SupabaseClient }
 ): Promise<Report> {
   const newReport: Report = {
     ...data,
-    id: 'rep-' + Date.now(),
+    id: generateUUID(),
     status: 'pending',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
 
   if (isSupabaseConfigured()) {
-    const supabase = createClient();
+    const supabase = options?.client || createClient();
     if (supabase) {
-      const { data: inserted } = await supabase.from('reports').insert(newReport).select().single();
+      const { data: inserted, error } = await supabase.from('reports').insert(newReport).select().single();
+      if (error) {
+        console.error('[Supabase Error] Failed to submit report:', error.message);
+        throw new Error(`Database error submitting report: ${error.message}`);
+      }
       if (inserted) return inserted as Report;
     }
   }
@@ -548,12 +671,16 @@ export async function submitReport(
   return newReport;
 }
 
-export async function getReports(): Promise<Report[]> {
+export async function getReports(options?: { client?: SupabaseClient }): Promise<Report[]> {
   if (isSupabaseConfigured()) {
-    const supabase = createClient();
+    const supabase = options?.client || createClient();
     if (supabase) {
       const { data, error } = await supabase.from('reports').select('*').order('created_at', { ascending: false });
-      if (!error && data) return data as Report[];
+      if (error) {
+        console.error('[Supabase Error] Failed to fetch reports:', error.message);
+      } else if (data) {
+        return data as Report[];
+      }
     }
   }
   return getLocal<Report[]>(STORAGE_KEYS.REPORTS, []);
@@ -562,12 +689,17 @@ export async function getReports(): Promise<Report[]> {
 export async function updateReportStatus(
   reportId: string,
   status: Report['status'],
-  adminNotes?: string
+  adminNotes?: string,
+  options?: { client?: SupabaseClient }
 ): Promise<void> {
   if (isSupabaseConfigured()) {
-    const supabase = createClient();
+    const supabase = options?.client || createClient();
     if (supabase) {
-      await supabase.from('reports').update({ status, admin_notes: adminNotes }).eq('id', reportId);
+      const { error } = await supabase.from('reports').update({ status, admin_notes: adminNotes }).eq('id', reportId);
+      if (error) {
+        console.error(`[Supabase Error] Failed to update report ${reportId}:`, error.message);
+        throw new Error(`Database error updating report: ${error.message}`);
+      }
       return;
     }
   }
@@ -583,39 +715,51 @@ export async function updateReportStatus(
 // ------------------------------------------------------------------------------
 // COLLECTION PIPELINE (Real Source Adapters, Review Queue & Scheduling)
 // ------------------------------------------------------------------------------
-export async function getCollectionRuns(): Promise<CollectionRun[]> {
+export async function getCollectionRuns(options?: { client?: SupabaseClient }): Promise<CollectionRun[]> {
   if (isSupabaseConfigured()) {
-    const supabase = createClient();
+    const supabase = options?.client || createClient();
     if (supabase) {
       const { data, error } = await supabase
         .from('collection_runs')
         .select('*')
         .order('started_at', { ascending: false });
-      if (!error && data) return data as CollectionRun[];
+      if (error) {
+        console.error('[Supabase Error] Failed to fetch collection runs:', error.message);
+      } else if (data) {
+        return data as CollectionRun[];
+      }
     }
   }
-  return getLocal<CollectionRun[]>(STORAGE_KEYS.RUNS, INITIAL_COLLECTION_RUNS);
+  if (isDemoModeAllowed()) {
+    return getLocal<CollectionRun[]>(STORAGE_KEYS.RUNS, INITIAL_COLLECTION_RUNS);
+  }
+  return [];
 }
 
 export async function runSourceCheck(
   sourceId: string,
-  options?: AdapterRunOptions
+  options?: AdapterRunOptions & { client?: SupabaseClient }
 ): Promise<CollectionRun> {
-  const source = await getSourceById(sourceId);
+  const client = options?.client;
+  const source = await getSourceById(sourceId, { client });
   if (!source) {
     throw new Error(`Source with ID "${sourceId}" was not found.`);
   }
 
   // Get complete current catalog (including pending review) for deduplication
   let allInternships: Internship[] = [];
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+  if (client || isSupabaseConfigured()) {
+    const supabase = client || createClient();
     if (supabase) {
-      const { data } = await supabase.from('internships').select('*');
-      if (data) allInternships = data as Internship[];
+      const { data, error } = await supabase.from('internships').select('*');
+      if (error) {
+        console.error('[Supabase Error] Failed to fetch catalog for dedup:', error.message);
+      } else if (data) {
+        allInternships = data as Internship[];
+      }
     }
   }
-  if (allInternships.length === 0) {
+  if (allInternships.length === 0 && isDemoModeAllowed()) {
     allInternships = getLocal<Internship[]>(STORAGE_KEYS.INTERNSHIPS, INITIAL_INTERNSHIPS);
   }
 
@@ -657,48 +801,54 @@ export async function runSourceCheck(
   if (summary.status === 'success' || summary.status === 'partial') {
     sourceUpdates.last_successful_check = summary.completedAt;
   }
-  await updateSource(sourceId, sourceUpdates);
+  await updateSource(sourceId, sourceUpdates, { client });
 
   // 2. Persist newly created internships
   for (const item of result.createdInternships) {
-    await createInternship(item);
+    await createInternship(item, { client });
   }
 
   // 3. Persist updated internships
   for (const item of result.updatedInternships) {
-    await updateInternship(item.id, item);
+    await updateInternship(item.id, item, { client });
   }
 
   // 4. Persist queued candidates into review queue
   if (result.queuedInternships.length > 0) {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
+    if (client || isSupabaseConfigured()) {
+      const supabase = client || createClient();
       if (supabase) {
         for (const queued of result.queuedInternships) {
-          await supabase.from('internships').upsert(queued);
+          const { error } = await supabase.from('internships').upsert(queued);
+          if (error) {
+            console.error('[Supabase Error] Failed to upsert review candidate:', error.message);
+          }
         }
       }
     }
-    const currentQueue = getLocal<Internship[]>(STORAGE_KEYS.REVIEW_QUEUE, []);
-    for (const q of result.queuedInternships) {
-      const existingIdx = currentQueue.findIndex((i) => i.id === q.id || i.title === q.title);
-      if (existingIdx >= 0) {
-        currentQueue[existingIdx] = q;
-      } else {
-        currentQueue.unshift(q);
+    if (typeof window !== 'undefined') {
+      const currentQueue = getLocal<Internship[]>(STORAGE_KEYS.REVIEW_QUEUE, []);
+      for (const q of result.queuedInternships) {
+        const existingIdx = currentQueue.findIndex((i) => i.id === q.id || i.title === q.title);
+        if (existingIdx >= 0) {
+          currentQueue[existingIdx] = q;
+        } else {
+          currentQueue.unshift(q);
+        }
       }
+      setLocal(STORAGE_KEYS.REVIEW_QUEUE, currentQueue);
     }
-    setLocal(STORAGE_KEYS.REVIEW_QUEUE, currentQueue);
   }
 
   // 5. Persist change logs
   if (result.changeLogs.length > 0) {
-    if (isSupabaseConfigured()) {
-      const supabase = createClient();
+    if (client || isSupabaseConfigured()) {
+      const supabase = client || createClient();
       if (supabase) {
         for (const log of result.changeLogs) {
           try {
-            await supabase.from('opportunity_change_logs').insert({
+            const { error } = await supabase.from('opportunity_change_logs').insert({
+              id: log.id && isValidUUID(log.id) ? log.id : generateUUID(),
               internship_id: log.internshipId,
               field_name: log.fieldName,
               old_value: log.oldValue !== undefined ? log.oldValue : null,
@@ -707,34 +857,44 @@ export async function runSourceCheck(
               change_source: log.changeSource,
               run_id: log.runId,
             });
-          } catch {
-            // Non-blocking in case migration table is not migrated yet
+            if (error) {
+              console.error('[Supabase Error] Failed to insert change log:', error.message);
+            }
+          } catch (logErr) {
+            console.error('[Supabase Error] Exception inserting change log:', logErr);
           }
         }
       }
     }
-    const existingLogs = getLocal<OpportunityChangeLog[]>(STORAGE_KEYS.CHANGE_LOGS, []);
-    setLocal(STORAGE_KEYS.CHANGE_LOGS, [...result.changeLogs, ...existingLogs].slice(0, 500));
+    if (typeof window !== 'undefined') {
+      const existingLogs = getLocal<OpportunityChangeLog[]>(STORAGE_KEYS.CHANGE_LOGS, []);
+      setLocal(STORAGE_KEYS.CHANGE_LOGS, [...result.changeLogs, ...existingLogs].slice(0, 500));
+    }
   }
 
   // 6. Persist run record
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+  if (client || isSupabaseConfigured()) {
+    const supabase = client || createClient();
     if (supabase) {
-      await supabase.from('collection_runs').insert(collectionRunRecord);
+      const { error } = await supabase.from('collection_runs').insert(collectionRunRecord);
+      if (error) {
+        console.error('[Supabase Error] Failed to insert collection run record:', error.message);
+      }
     }
   }
-  const runs = getLocal<CollectionRun[]>(STORAGE_KEYS.RUNS, INITIAL_COLLECTION_RUNS);
-  runs.unshift(collectionRunRecord);
-  setLocal(STORAGE_KEYS.RUNS, runs);
+  if (typeof window !== 'undefined') {
+    const runs = getLocal<CollectionRun[]>(STORAGE_KEYS.RUNS, INITIAL_COLLECTION_RUNS);
+    runs.unshift(collectionRunRecord);
+    setLocal(STORAGE_KEYS.RUNS, runs);
+  }
 
   return collectionRunRecord;
 }
 
 export async function runAllDueSources(
-  options?: { forceAll?: boolean } & AdapterRunOptions
+  options?: { forceAll?: boolean; client?: SupabaseClient } & AdapterRunOptions
 ): Promise<CollectionRun[]> {
-  const sources = await getSources();
+  const sources = await getSources({ client: options?.client });
   const dueSources = sources.filter((s) => {
     if (options?.forceAll) return true;
     return sourceRegistry.isSourceDue(s as RegisteredSource);
@@ -748,8 +908,9 @@ export async function runAllDueSources(
       runRecords.push(record);
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(`[Collection Error] Source ${source.name} (${source.id}) failed:`, errorMsg);
       const failedRecord: CollectionRun = {
-        id: 'failed-' + Date.now() + '-' + source.id,
+        id: generateUUID(),
         source_id: source.id,
         source_name: source.name,
         started_at: new Date().toISOString(),
@@ -758,8 +919,22 @@ export async function runAllDueSources(
         records_discovered: 0,
         records_created: 0,
         records_updated: 0,
+        records_skipped: 0,
+        records_pending_review: 0,
+        duration_ms: 0,
         error_summary: errorMsg,
       };
+
+      if (options?.client || isSupabaseConfigured()) {
+        const supabase = options?.client || createClient();
+        if (supabase) {
+          const { error } = await supabase.from('collection_runs').insert(failedRecord);
+          if (error) {
+            console.error('[Supabase Error] Failed to persist failed run record:', error.message);
+          }
+        }
+      }
+
       runRecords.push(failedRecord);
     }
   }
@@ -792,22 +967,32 @@ export async function updateSourceFrequency(
   return await updateSource(sourceId, updates);
 }
 
-export async function getReviewQueue(): Promise<Internship[]> {
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+export async function getReviewQueue(options?: { client?: SupabaseClient }): Promise<Internship[]> {
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
       const { data, error } = await supabase
         .from('internships')
         .select('*')
         .in('review_status', ['pending_review', 'flagged'])
         .order('created_at', { ascending: false });
-      if (!error && data && data.length > 0) return data as Internship[];
+      if (error) {
+        console.error('[Supabase Error] Failed to fetch review queue:', error.message);
+      } else if (data) {
+        return data as Internship[];
+      }
     }
   }
-  return getLocal<Internship[]>(STORAGE_KEYS.REVIEW_QUEUE, []);
+  if (isDemoModeAllowed()) {
+    return getLocal<Internship[]>(STORAGE_KEYS.REVIEW_QUEUE, []);
+  }
+  return [];
 }
 
-export async function approveReviewCandidate(candidateId: string): Promise<Internship | null> {
+export async function approveReviewCandidate(
+  candidateId: string,
+  options?: { client?: SupabaseClient }
+): Promise<Internship | null> {
   const updates: Partial<Internship> = {
     publication_status: 'published',
     review_status: 'approved',
@@ -818,15 +1003,19 @@ export async function approveReviewCandidate(candidateId: string): Promise<Inter
   };
 
   // If in Supabase
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('internships')
         .update(updates)
         .eq('id', candidateId)
         .select()
         .single();
+      if (error) {
+        console.error(`[Supabase Error] Failed to approve candidate ${candidateId}:`, error.message);
+        throw new Error(`Database error approving candidate: ${error.message}`);
+      }
       if (data) return data as Internship;
     }
   }
@@ -858,7 +1047,8 @@ export async function approveReviewCandidate(candidateId: string): Promise<Inter
 
 export async function rejectReviewCandidate(
   candidateId: string,
-  reason?: string
+  reason?: string,
+  options?: { client?: SupabaseClient }
 ): Promise<Internship | null> {
   const updates: Partial<Internship> = {
     publication_status: 'archived',
@@ -867,15 +1057,19 @@ export async function rejectReviewCandidate(
     updated_at: new Date().toISOString(),
   };
 
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('internships')
         .update(updates)
         .eq('id', candidateId)
         .select()
         .single();
+      if (error) {
+        console.error(`[Supabase Error] Failed to reject candidate ${candidateId}:`, error.message);
+        throw new Error(`Database error rejecting candidate: ${error.message}`);
+      }
       if (data) return data as Internship;
     }
   }
@@ -914,9 +1108,12 @@ export async function requestRecheckCandidate(candidateId: string): Promise<Inte
   return rechecked;
 }
 
-export async function getChangeLogs(internshipId?: string): Promise<OpportunityChangeLog[]> {
-  if (isSupabaseConfigured()) {
-    const supabase = createClient();
+export async function getChangeLogs(
+  internshipId?: string,
+  options?: { client?: SupabaseClient }
+): Promise<OpportunityChangeLog[]> {
+  if (options?.client || isSupabaseConfigured()) {
+    const supabase = options?.client || createClient();
     if (supabase) {
       let query = supabase
         .from('opportunity_change_logs')
@@ -928,7 +1125,9 @@ export async function getChangeLogs(internshipId?: string): Promise<OpportunityC
       }
 
       const { data, error } = await query;
-      if (!error && data && data.length > 0) {
+      if (error) {
+        console.error('[Supabase Error] Failed to fetch change logs:', error.message);
+      } else if (data) {
         return data.map((d: any) => ({
           id: d.id,
           internshipId: d.internship_id,
@@ -943,9 +1142,12 @@ export async function getChangeLogs(internshipId?: string): Promise<OpportunityC
     }
   }
 
-  const logs = getLocal<OpportunityChangeLog[]>(STORAGE_KEYS.CHANGE_LOGS, []);
-  if (!internshipId) return logs;
-  return logs.filter((l) => l.internshipId === internshipId);
+  if (isDemoModeAllowed()) {
+    const logs = getLocal<OpportunityChangeLog[]>(STORAGE_KEYS.CHANGE_LOGS, []);
+    if (!internshipId) return logs;
+    return logs.filter((l) => l.internshipId === internshipId);
+  }
+  return [];
 }
 
 // Reset data helper for testing

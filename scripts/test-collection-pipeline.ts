@@ -30,7 +30,18 @@ import {
   approveReviewCandidate,
   rejectReviewCandidate,
   resetDemoData,
+  createInternship,
+  createSource,
+  runSourceCheck,
+  getInternships,
+  getSources,
 } from '../src/lib/data-service';
+import { generateUUID, isValidUUID } from '../src/lib/uuid';
+import {
+  getSupabaseAdminDiagnostics,
+  isSupabaseAdminConfigured,
+  createAdminClient,
+} from '../src/lib/supabase/server-admin';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -536,6 +547,224 @@ async function runAllTests() {
     statusUpcoming === 'upcoming',
     '20.2 Future opening date correctly sets application_status to upcoming'
   );
+
+  // ---------------------------------------------------------------------------
+  // TEST 21: UUID Generation & PostgreSQL Compatibility
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 21: UUID Compatibility & RFC 4122 Standard Validation...');
+  const testCandidatePayload = {
+    title: 'Autonomous Robotics Internship',
+    organization: 'IISc Bangalore',
+    department: 'Robotics and Autonomous Systems',
+    description: 'Research fellowship in advanced robotics, perception, and SLAM navigation algorithms.',
+    officialApplicationUrl: 'https://iisc.ac.in/admissions/robotics-fellowship',
+    originalSourceUrl: 'https://iisc.ac.in/admissions/robotics-fellowship',
+    applicationOpeningDate: '2026-10-01',
+    applicationDeadline: '2026-12-01',
+    eligibleDisciplines: ['Engineering and Technology', 'Computer Science and IT'],
+    minEducationLevel: 'Undergraduate',
+    stipendAmount: 15000,
+    stipendCurrency: 'INR',
+    stipendFrequency: 'per month',
+    stipendStatus: 'paid',
+    duration: '2 Months',
+    location: 'Bengaluru, Karnataka',
+    format: 'onsite',
+    minCgpa: 8.0,
+  };
+
+  const freshSource: RegisteredSource = {
+    ...testSource,
+    id: '00000000-0000-0000-0000-000000000004',
+    name: 'IISc Bangalore',
+    official_domain: 'iisc.ac.in',
+    opportunity_page_url: 'https://iisc.ac.in/admissions/robotics-fellowship',
+  };
+
+  const newPipelineRun = await executeSourceCollection(freshSource, [], {
+    mockPayload: [testCandidatePayload],
+    fetcher: (async () => new Response('OK', { status: 200 })) as any,
+  });
+
+  assert(
+    isValidUUID(newPipelineRun.summary.runId),
+    '21.1 Collection pipeline summary runId is a valid RFC 4122 UUID',
+    `Received: ${newPipelineRun.summary.runId}`
+  );
+
+  assert(
+    newPipelineRun.createdInternships.length === 1 &&
+      isValidUUID(newPipelineRun.createdInternships[0].id) &&
+      !newPipelineRun.createdInternships[0].id.startsWith('intern-'),
+    '21.2 Created internship ID is a valid UUID and not legacy intern- timestamp string',
+    `Received: ${newPipelineRun.createdInternships[0]?.id}`
+  );
+
+  // Queue for review candidate via curated/manual verification source
+  const manualQueueSource: RegisteredSource = {
+    ...freshSource,
+    id: generateUUID(),
+    name: 'Curated Institutional Source',
+    monitoring_method: 'Manual Verification',
+  };
+
+  const reviewPipelineRun = await executeSourceCollection(manualQueueSource, [], {
+    mockPayload: {
+      title: 'High Scrutiny Public Policy Project',
+      description: 'Undergraduate research fellowship in public policy formulation and governance reforms.',
+      officialApplicationUrl: 'https://internship.mea.gov.in',
+      originalSourceUrl: 'https://internship.mea.gov.in',
+    },
+    fetcher: (async () => new Response('OK', { status: 200 })) as any,
+  });
+
+  assert(
+    reviewPipelineRun.queuedInternships.length === 1 &&
+      isValidUUID(reviewPipelineRun.queuedInternships[0].id) &&
+      !reviewPipelineRun.queuedInternships[0].id.startsWith('cand-'),
+    '21.3 Queued review candidate ID is a valid UUID and not legacy cand- timestamp string',
+    `Received: ${reviewPipelineRun.queuedInternships[0]?.id}`
+  );
+
+  assert(
+    newPipelineRun.createdInternships[0].verification_status === 'source_checked',
+    '21.4 Automated collection assigns verification_status: source_checked (not official_verified)'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST 22: Server-Only Admin Supabase Client Diagnostics
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 22: Server Admin Client Diagnostics & Missing Key Protection...');
+
+  // Save environment
+  const originalUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const originalServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  try {
+    // 22.1 Missing service role key
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example-project.supabase.co';
+    const diagMissingKey = getSupabaseAdminDiagnostics();
+    assert(
+      !diagMissingKey.configured && diagMissingKey.missingServiceKey,
+      '22.1 Missing SUPABASE_SERVICE_ROLE_KEY is detected with configured = false'
+    );
+    assert(
+      diagMissingKey.helpMessage.includes('SUPABASE_SERVICE_ROLE_KEY is missing'),
+      '22.2 Informative error message explains SUPABASE_SERVICE_ROLE_KEY requirement'
+    );
+
+    // 22.2 Placeholder service role key
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.your-service-role-key-here';
+    const diagPlaceholder = getSupabaseAdminDiagnostics();
+    assert(
+      !diagPlaceholder.configured && diagPlaceholder.hasPlaceholderKey,
+      '22.3 Placeholder SUPABASE_SERVICE_ROLE_KEY is detected and blocked'
+    );
+
+    // 22.3 Browser context guard
+    (globalThis as any).window = {};
+    let browserViolationCaught = false;
+    try {
+      createAdminClient();
+    } catch (err: unknown) {
+      browserViolationCaught = true;
+      assert(
+        err instanceof Error && err.message.includes('SECURITY VIOLATION'),
+        '22.4 createAdminClient strictly throws security exception in browser context'
+      );
+    }
+    assert(browserViolationCaught, '22.5 Browser context execution guard enforced');
+  } finally {
+    delete (globalThis as any).window;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = originalUrl;
+    process.env.SUPABASE_SERVICE_ROLE_KEY = originalServiceKey;
+  }
+
+  // ---------------------------------------------------------------------------
+  // TEST 23: RLS-Safe Background Collection Writes
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 23: RLS-Safe Writes with Server Admin Privileges...');
+
+  let passedClient: any = null;
+  const mockAdminClient: any = {
+    from: (table: string) => {
+      passedClient = table;
+      return {
+        select: () => ({
+          order: () => Promise.resolve({ data: [], error: null }),
+          eq: () => ({ single: () => Promise.resolve({ data: null, error: null }), maybeSingle: () => Promise.resolve({ data: null, error: null }) }),
+        }),
+        insert: () => ({ select: () => ({ single: () => Promise.resolve({ data: { id: generateUUID() }, error: null }) }) }),
+        update: () => ({ eq: () => ({ select: () => ({ single: () => Promise.resolve({ data: { id: generateUUID() }, error: null }) }) }) }),
+        upsert: () => Promise.resolve({ data: null, error: null }),
+      };
+    },
+  };
+
+  await getSources({ client: mockAdminClient });
+  assert(
+    passedClient === 'sources',
+    '23.1 Injected server admin client is passed through to database operations'
+  );
+
+  // ---------------------------------------------------------------------------
+  // TEST 24: Database Error Handling & Anti-Silent Fallback
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 24: Database Error Handling & Anti-Silent Fallback...');
+
+  const mockErrorClient: any = {
+    from: () => ({
+      insert: () => ({
+        select: () => ({
+          single: () => Promise.resolve({
+            data: null,
+            error: { message: 'new row violates row-level security policy for table "internships"', details: 'RLS denial' },
+          }),
+        }),
+      }),
+      select: () => ({
+        eq: () => ({
+          order: () => Promise.resolve({
+            data: null,
+            error: { message: 'connection timeout to database pool' },
+          }),
+        }),
+      }),
+    }),
+  };
+
+  // Temporarily set Supabase config to simulate configured DB
+  const prevUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const prevKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://real-project.supabase.co';
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = 'real-anon-key-12345';
+
+  let rlsErrorCaught = false;
+  try {
+    await createInternship(
+      {
+        title: 'Unauthorized Test Listing',
+        organization: 'Testing Org',
+        description: 'Test description',
+        duration: '1 Month',
+        location: 'Remote',
+        official_application_url: 'https://example.com',
+        original_source_url: 'https://example.com',
+      } as any,
+      { client: mockErrorClient }
+    );
+  } catch (err: unknown) {
+    rlsErrorCaught = true;
+    assert(
+      err instanceof Error && err.message.includes('Database error creating internship'),
+      '24.1 Database RLS error is raised and NOT swallowed by silent localStorage fallback'
+    );
+  } finally {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = prevUrl;
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = prevKey;
+  }
+  assert(rlsErrorCaught, '24.2 Database error correctly interrupted execution');
 
   // ---------------------------------------------------------------------------
   // SUMMARY

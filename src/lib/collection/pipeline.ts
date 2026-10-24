@@ -1,4 +1,5 @@
 import { Internship } from '@/types';
+import { generateUUID } from '../uuid';
 import { sourceRegistry, RegisteredSource } from './source-registry';
 import {
   CollectionPipelineSummary,
@@ -22,7 +23,7 @@ export async function executeSourceCollection(
   existingInternships: Internship[],
   options?: AdapterRunOptions
 ): Promise<PipelineExecutionResult> {
-  const runId = 'run-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+  const runId = generateUUID();
   const startedAt = new Date().toISOString();
   const startTime = Date.now();
 
@@ -101,7 +102,7 @@ export async function executeSourceCollection(
             // Record change log for material diffs
             if (existing.application_deadline !== updated.application_deadline) {
               changeLogs.push({
-                id: 'log-' + Date.now() + '-dl',
+                id: generateUUID(),
                 internshipId: existing.id,
                 fieldName: 'application_deadline',
                 oldValue: existing.application_deadline,
@@ -113,7 +114,7 @@ export async function executeSourceCollection(
             }
             if (existing.stipend_amount !== updated.stipend_amount) {
               changeLogs.push({
-                id: 'log-' + Date.now() + '-stipend',
+                id: generateUUID(),
                 internshipId: existing.id,
                 fieldName: 'stipend_amount',
                 oldValue: existing.stipend_amount,
@@ -125,7 +126,7 @@ export async function executeSourceCollection(
             }
             if (existing.link_status !== updated.link_status) {
               changeLogs.push({
-                id: 'log-' + Date.now() + '-link',
+                id: generateUUID(),
                 internshipId: existing.id,
                 fieldName: 'link_status',
                 oldValue: existing.link_status,
@@ -146,7 +147,7 @@ export async function executeSourceCollection(
             // Insert brand new published opportunity
             const newRecord: Internship = {
               ...normalized,
-              id: 'intern-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+              id: generateUUID(),
               publication_status: 'published',
               review_status: 'approved',
               verification_status: 'source_checked',
@@ -168,7 +169,7 @@ export async function executeSourceCollection(
           // Send candidate to admin review queue
           const reviewCandidate: Internship = {
             ...normalized,
-            id: 'cand-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+            id: generateUUID(),
             publication_status: 'pending_review',
             review_status: 'pending_review',
             verification_status: 'pending_verification',
@@ -265,7 +266,7 @@ export async function executeMultiSourceCollection(
       // Failure isolation: Failure of one source must NOT block other sources!
       const errorMsg = err instanceof Error ? err.message : String(err);
       summaries.push({
-        runId: 'failed-' + Date.now(),
+        runId: generateUUID(),
         sourceId: source.id,
         sourceName: source.name,
         startedAt: new Date().toISOString(),
