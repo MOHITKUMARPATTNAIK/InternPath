@@ -88,7 +88,7 @@ function LoginForm() {
               <div className="space-y-1">
                 <p className="font-semibold text-amber-300">Supabase Backend Required</p>
                 <p className="text-[11px] text-amber-200/80 leading-relaxed">
-                  Real authentication requires setting <code className="bg-amber-900/50 px-1 py-0.5 rounded text-amber-100 font-mono">NEXT_PUBLIC_SUPABASE_URL</code> and <code className="bg-amber-900/50 px-1 py-0.5 rounded text-amber-100 font-mono">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in <code className="bg-amber-900/50 px-1 py-0.5 rounded text-amber-100 font-mono">.env.local</code>.
+                  Real authentication requires setting <code className="bg-amber-900/50 px-1 py-0.5 rounded text-amber-100 font-mono">NEXT_PUBLIC_SUPABASE_URL</code> and <code className="bg-amber-900/50 px-1 py-0.5 rounded text-amber-100 font-mono">NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> (or <code className="bg-amber-900/50 px-1 py-0.5 rounded text-amber-100 font-mono">NEXT_PUBLIC_SUPABASE_ANON_KEY</code>) in <code className="bg-amber-900/50 px-1 py-0.5 rounded text-amber-100 font-mono">.env.local</code>.
                 </p>
               </div>
             </div>

@@ -111,16 +111,16 @@ export function StatusBanner() {
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 font-mono text-[11px] text-slate-800">
                 <div className="text-slate-500 mb-1"># In your .env.local file:</div>
                 <div>NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co</div>
-                <div>NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJh...</div>
-                <div>SUPABASE_SERVICE_ROLE_KEY=eyJh...</div>
+                <div>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=eyJh... # or NEXT_PUBLIC_SUPABASE_ANON_KEY</div>
+                <div>SUPABASE_SERVICE_ROLE_KEY=eyJh... # optional backend key</div>
               </div>
 
               <div className="space-y-1.5">
                 <div className="font-semibold text-slate-800">Steps to connect your Supabase database:</div>
                 <ol className="list-decimal list-inside space-y-1 pl-1">
                   <li>Create a free project at <span className="text-indigo-600 font-medium">supabase.com</span>.</li>
-                  <li>Copy your Project URL and Anon Public Key into <code className="bg-slate-100 px-1 py-0.5 rounded">.env.local</code>.</li>
-                  <li>Run the SQL migration in <code className="bg-slate-100 px-1 py-0.5 rounded">supabase/migrations/</code> via Supabase SQL Editor.</li>
+                  <li>Copy your Project URL and Publishable/Anon Key into <code className="bg-slate-100 px-1 py-0.5 rounded">.env.local</code>.</li>
+                  <li>Run the SQL migrations in <code className="bg-slate-100 px-1 py-0.5 rounded">supabase/migrations/</code> via Supabase SQL Editor.</li>
                   <li>Restart the Next.js dev server.</li>
                 </ol>
               </div>

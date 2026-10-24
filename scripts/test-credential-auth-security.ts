@@ -19,11 +19,11 @@ import { getSupabaseDiagnostics, isSupabaseConfigured, isDemoModeAllowed } from 
 
 console.log('============================================================');
 console.log('InternPath - Real Credential Authentication Security Suite');
-console.log('Testing 11 Real Credential, Anti-Fallback & Security Tests');
+console.log('Testing 12 Real Credential, Anti-Fallback & Security Tests');
 console.log('============================================================\n');
 
 let passedTests = 0;
-const totalTests = 11;
+const totalTests = 12;
 
 // Mock session and user types
 interface MockSession {
@@ -367,6 +367,42 @@ async function runTests() {
     passedTests++;
   } else {
     console.error('  ✗ FAIL: 11. Diagnostics evaluation failed:', diagnostics);
+  }
+
+  // Test 12: Modern Publishable Key and Legacy Anon Key compatibility
+  console.log('\nTest 12: NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY & ANON_KEY Compatibility...');
+  const originalUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const originalPub = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  const originalAnon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  try {
+    // Sub-test A: Modern publishable key only
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://live-project-abc.supabase.co';
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_live_token_12345';
+    delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const diagPub = getSupabaseDiagnostics();
+
+    // Sub-test B: Legacy anon key only (backward compatibility)
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://live-project-abc.supabase.co';
+    delete process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'eyJh_live_legacy_anon_token_12345';
+    const diagAnon = getSupabaseDiagnostics();
+
+    if (diagPub.configured === true && diagAnon.configured === true) {
+      console.log('  ✓ PASS: 12. Supabase client supports NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY with backward compatibility for NEXT_PUBLIC_SUPABASE_ANON_KEY');
+      passedTests++;
+    } else {
+      console.error('  ✗ FAIL: 12. Key compatibility check failed:', { diagPub, diagAnon });
+    }
+  } finally {
+    if (originalUrl !== undefined) process.env.NEXT_PUBLIC_SUPABASE_URL = originalUrl;
+    else delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+    if (originalPub !== undefined) process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = originalPub;
+    else delete process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+
+    if (originalAnon !== undefined) process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = originalAnon;
+    else delete process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   }
 
   console.log('\n============================================================');

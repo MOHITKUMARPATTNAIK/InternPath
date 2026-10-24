@@ -68,6 +68,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isLoggingOutRef = useRef<boolean>(false);
 
   useEffect(() => {
+    let authListenerSubscription: { unsubscribe: () => void } | null = null;
+
+    const syncUserProfile = async (
+      supabaseClient: NonNullable<ReturnType<typeof createClient>>,
+      authUserObj: { id: string; email?: string; user_metadata?: Record<string, any> }
+    ) => {
+      const { data: userProfile, error: profileErr } = await supabaseClient
+        .from('profiles')
+        .select('*')
+        .eq('id', authUserObj.id)
+        .maybeSingle();
+
+      if (profileErr) {
+        console.warn('Profile retrieval notice:', profileErr.message);
+      }
+
+      const role = (userProfile?.role as 'student' | 'admin') || 'student';
+      const fallbackDisplayName =
+        authUserObj.user_metadata?.display_name ||
+        authUserObj.email?.split('@')[0] ||
+        'Student User';
+
+      const authUser: AuthUser = {
+        id: authUserObj.id,
+        email: authUserObj.email || '',
+        display_name: userProfile?.display_name || fallbackDisplayName,
+        role,
+      };
+
+      const resolvedProfile: UserProfile = userProfile || {
+        id: authUserObj.id,
+        email: authUserObj.email || '',
+        display_name: fallbackDisplayName,
+        academic_background: 'Engineering and Technology',
+        primary_interest: 'General',
+        secondary_interests: [],
+        skills: [],
+        preferred_format: 'Any',
+        preferred_locations: [],
+        role: 'student',
+      };
+
+      setUser(authUser);
+      setProfile(resolvedProfile);
+    };
+
     async function initAuth() {
       setLoading(true);
       try {
@@ -85,34 +131,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const supabase = createClient();
           if (supabase) {
             const { data: { session }, error } = await supabase.auth.getSession();
-            if (error) {
-              console.error('Supabase getSession error:', error.message);
+            if (error || !session?.user) {
               setUser(null);
               setProfile(null);
-            } else if (session?.user) {
-              const { data: userProfile, error: profileErr } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', session.user.id)
-                .single();
-
-              if (profileErr) {
-                console.warn('Profile retrieval notice:', profileErr.message);
-              }
-
-              const role = (userProfile?.role as 'student' | 'admin') || 'student';
-              const authUser: AuthUser = {
-                id: session.user.id,
-                email: session.user.email || '',
-                display_name: userProfile?.display_name || session.user.user_metadata?.display_name || 'Student User',
-                role,
-              };
-              setUser(authUser);
-              setProfile(userProfile || null);
             } else {
-              setUser(null);
-              setProfile(null);
+              await syncUserProfile(supabase, session.user);
             }
+
+            const { data: { subscription } } = supabase.auth.onAuthStateChange(
+              async (event, newSession) => {
+                if (event === 'SIGNED_OUT' || !newSession?.user) {
+                  setUser(null);
+                  setProfile(null);
+                } else if (newSession?.user) {
+                  await syncUserProfile(supabase, newSession.user);
+                }
+              }
+            );
+            authListenerSubscription = subscription;
           } else {
             setUser(null);
             setProfile(null);
@@ -173,6 +209,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     initAuth();
+
+    return () => {
+      authListenerSubscription?.unsubscribe();
+    };
   }, [isConfigured]);
 
   const signIn = async (email: string, password?: string): Promise<{ error?: string }> => {
@@ -184,7 +224,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       const err =
         configStatus.helpMessage ||
-        'Authentication is unavailable because Supabase is not configured in .env.local. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY and restart the dev server.';
+        'Authentication is unavailable because Supabase is not configured in .env.local. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY) and restart the dev server.';
       return { error: err };
     }
 
@@ -232,18 +272,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .from('profiles')
         .select('*')
         .eq('id', data.user.id)
-        .single();
+        .maybeSingle();
 
       const role = (userProfile?.role as 'student' | 'admin') || 'student';
+      const fallbackDisplayName =
+        data.user.user_metadata?.display_name || data.user.email?.split('@')[0] || 'Student User';
+
       const authUser: AuthUser = {
         id: data.user.id,
         email: data.user.email || email.trim(),
-        display_name: userProfile?.display_name || data.user.user_metadata?.display_name || 'Student User',
+        display_name: userProfile?.display_name || fallbackDisplayName,
         role,
       };
 
+      const resolvedProfile: UserProfile = userProfile || {
+        id: data.user.id,
+        email: data.user.email || email.trim(),
+        display_name: fallbackDisplayName,
+        academic_background: 'Engineering and Technology',
+        primary_interest: 'General',
+        secondary_interests: [],
+        skills: [],
+        preferred_format: 'Any',
+        preferred_locations: [],
+        role: 'student',
+      };
+
       setUser(authUser);
-      setProfile(userProfile || null);
+      setProfile(resolvedProfile);
       setLoading(false);
       return {};
     } catch (networkOrUnknownError: any) {
@@ -268,7 +324,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       const err =
         configStatus.helpMessage ||
-        'Account registration is unavailable because Supabase is not configured in .env.local. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY and restart the dev server.';
+        'Account registration is unavailable because Supabase is not configured in .env.local. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY) and restart the dev server.';
       return { error: err };
     }
 
@@ -284,6 +340,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         password: password || '',
         options: {
           data: { display_name: displayName || email.trim().split('@')[0] },
+          emailRedirectTo:
+            typeof window !== 'undefined'
+              ? `${window.location.origin}/auth/callback`
+              : undefined,
         },
       });
 
@@ -481,7 +541,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (isConfigured) {
       const supabase = createClient();
       if (supabase) {
-        const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo:
+            typeof window !== 'undefined'
+              ? `${window.location.origin}/auth/callback?next=/auth/reset-password`
+              : undefined,
+        });
         if (error) return { error: error.message };
         return { message: 'Password reset link sent to your registered email address.' };
       }

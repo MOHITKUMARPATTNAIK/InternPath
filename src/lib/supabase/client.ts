@@ -12,12 +12,17 @@ export interface SupabaseDiagnostics {
 
 export const getSupabaseDiagnostics = (): SupabaseDiagnostics => {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+  const key =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    '';
 
   const missingUrl = url.trim() === '';
   const missingAnonKey = key.trim() === '';
   const hasPlaceholderUrl = url.includes('your-project-id');
-  const hasPlaceholderKey = key.includes('your-anon-key');
+  const hasPlaceholderKey =
+    key.includes('your-anon-key') ||
+    key.includes('your-publishable-key');
   const invalidProtocol = !missingUrl && !url.startsWith('https://');
 
   const configured =
@@ -32,14 +37,15 @@ export const getSupabaseDiagnostics = (): SupabaseDiagnostics => {
   if (!configured) {
     if (missingUrl && missingAnonKey) {
       helpMessage =
-        'Supabase is not configured. Both NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are missing in .env.local.';
+        'Supabase is not configured. Both NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY) are missing in .env.local.';
     } else if (missingUrl) {
       helpMessage = 'NEXT_PUBLIC_SUPABASE_URL is missing in .env.local.';
     } else if (missingAnonKey) {
-      helpMessage = 'NEXT_PUBLIC_SUPABASE_ANON_KEY is missing in .env.local.';
+      helpMessage =
+        'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY is missing in .env.local.';
     } else if (hasPlaceholderUrl || hasPlaceholderKey) {
       helpMessage =
-        'Placeholder Supabase credentials detected in .env.local. Please replace with your real project URL and public anon key.';
+        'Placeholder Supabase credentials detected in .env.local. Please replace with your real project URL and public key.';
     } else if (invalidProtocol) {
       helpMessage = 'NEXT_PUBLIC_SUPABASE_URL must start with https://.';
     }
@@ -77,11 +83,13 @@ export const isDemoModeAllowed = (): boolean => {
 
 export function createClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseKey =
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  if (!isSupabaseConfigured() || !supabaseUrl || !supabaseAnonKey) {
+  if (!isSupabaseConfigured() || !supabaseUrl || !supabaseKey) {
     return null;
   }
 
-  return createBrowserClient(supabaseUrl, supabaseAnonKey);
+  return createBrowserClient(supabaseUrl, supabaseKey);
 }
