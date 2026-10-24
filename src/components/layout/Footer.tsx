@@ -1,8 +1,13 @@
+'use client';
+
 import React from 'react';
 import Link from 'next/link';
-import { ShieldCheck } from 'lucide-react';
+import { ShieldCheck, Database } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
+import { isUserAdmin } from '@/types';
 
 export function Footer() {
+  const { user } = useAuth();
   return (
     <footer className="bg-slate-900 text-slate-400 border-t border-slate-800 text-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -77,11 +82,14 @@ export function Footer() {
                   Profile & Eligibility Match
                 </Link>
               </li>
-              <li>
-                <Link href="/admin" className="hover:text-indigo-400 transition">
-                  Admin & Collector Status
-                </Link>
-              </li>
+              {isUserAdmin(user?.role) && (
+                <li>
+                  <Link href="/admin" className="hover:text-amber-400 transition flex items-center gap-1.5 text-amber-400 font-medium">
+                    <Database className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Resource Management</span>
+                  </Link>
+                </li>
+              )}
             </ul>
           </div>
         </div>

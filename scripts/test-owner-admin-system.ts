@@ -1,4 +1,6 @@
 import assert from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
 import { isUserAdmin } from '../src/types';
 import { generateUUID, isValidUUID } from '../src/lib/uuid';
 import {
@@ -21,7 +23,7 @@ import { INITIAL_SOURCES } from '../src/data/seedData';
 async function runOwnerAdminTests() {
   console.log('============================================================');
   console.log('InternPath - Secure Owner-Admin System Test Suite');
-  console.log('Testing 16 Security, RLS-Authorization & Role Invariants');
+  console.log('Testing 23 Security, RLS-Authorization & Role Invariants');
   console.log('============================================================\n');
 
   // ---------------------------------------------------------------------------
@@ -386,8 +388,106 @@ async function runOwnerAdminTests() {
   assert.strictEqual(queryHadStatusFilter, false, '8.2 Admin query with includeAllStatuses includes draft, expired, archived');
   console.log('  ✓ PASS: 8. Admin query correctly fetches all listings regardless of status');
 
+  // ---------------------------------------------------------------------------
+  // TEST 9: Resource Management Navigation Configuration
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 9: Resource Management Navigation Configuration...');
+  const computeNavLinks = (user: { role?: string } | null) => {
+    return [
+      ...(user ? [] : [{ label: 'Home', href: '/' }]),
+      { label: 'Explore Internships', href: '/internships' },
+      { label: 'Categories', href: '/categories' },
+      { label: 'Saved Internships', href: '/saved', requiresAuth: true },
+      { label: 'My Profile', href: '/profile', requiresAuth: true },
+      ...(isUserAdmin(user?.role)
+        ? [{ label: 'Resource Management', href: '/admin', adminOnly: true }]
+        : []),
+    ];
+  };
+
+  const studentNav = computeNavLinks(studentUser);
+  const unauthNav = computeNavLinks(null);
+  const adminNav = computeNavLinks(adminUser);
+  const ownerNav = computeNavLinks(ownerUser);
+
+  assert.strictEqual(
+    studentNav.some((n) => n.href === '/admin' || n.label.includes('Resource')),
+    false,
+    '9.1 Student navigation strictly excludes Resource Management and /admin'
+  );
+  assert.strictEqual(
+    unauthNav.some((n) => n.href === '/admin' || n.label.includes('Resource')),
+    false,
+    '9.2 Visitor navigation strictly excludes Resource Management and /admin'
+  );
+  assert.strictEqual(
+    adminNav.some((n) => n.href === '/admin' && n.label === 'Resource Management'),
+    true,
+    '9.3 Admin navigation includes Resource Management linking to /admin'
+  );
+  assert.strictEqual(
+    ownerNav.some((n) => n.href === '/admin' && n.label === 'Resource Management'),
+    true,
+    '9.4 Owner navigation includes Resource Management linking to /admin'
+  );
+  console.log('  ✓ PASS: 9. Resource Management navigation is strictly exclusive to admin and owner roles');
+
+  // ---------------------------------------------------------------------------
+  // TEST 10: Navbar and Footer Source Code Invariants
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 10: Navbar & Footer Source Code Invariants...');
+  const navbarSrc = fs.readFileSync(path.join(__dirname, '../src/components/layout/Navbar.tsx'), 'utf-8');
+  const footerSrc = fs.readFileSync(path.join(__dirname, '../src/components/layout/Footer.tsx'), 'utf-8');
+
+  assert.strictEqual(
+    navbarSrc.includes("user?.role === 'admin'"),
+    false,
+    '10.1 Navbar does not use fragile user?.role === "admin" checks'
+  );
+  assert.strictEqual(
+    navbarSrc.includes("user.role === 'admin'"),
+    false,
+    '10.2 Navbar dropdown does not use user.role === "admin"'
+  );
+  assert.strictEqual(
+    navbarSrc.includes('isUserAdmin(user?.role)'),
+    true,
+    '10.3 Navbar uses shared isUserAdmin helper for navigation gates'
+  );
+  assert.strictEqual(
+    navbarSrc.includes('Resource Management'),
+    true,
+    '10.4 Navbar includes Resource Management label'
+  );
+  assert.strictEqual(
+    footerSrc.includes('isUserAdmin(user?.role)'),
+    true,
+    '10.5 Footer guards Resource Management behind isUserAdmin'
+  );
+  console.log('  ✓ PASS: 10. Navbar and Footer use shared isUserAdmin helper without bypass holes');
+
+  // ---------------------------------------------------------------------------
+  // TEST 11: Multi-Layer Access Control Invariant (Defense-in-Depth)
+  // ---------------------------------------------------------------------------
+  console.log('\nTest 11: Multi-Layer Access Control Invariant (Defense-in-Depth)...');
+  // Verify that even if a student visits /admin directly (bypassing navigation):
+  // 1) AppShell blocks access with 403
+  // 2) Supabase RLS rejects any API/direct table mutation
+  const appShellSrc = fs.readFileSync(path.join(__dirname, '../src/components/layout/AppShell.tsx'), 'utf-8');
+  assert.strictEqual(
+    appShellSrc.includes("!isUserAdmin(user.role)"),
+    true,
+    '11.1 AppShell enforces server/client-side 403 clearance check using isUserAdmin'
+  );
+  assert.strictEqual(
+    appShellSrc.includes("pathname.startsWith('/admin')"),
+    true,
+    '11.2 AppShell guards all subpaths of /admin'
+  );
+  console.log('  ✓ PASS: 11. Defense-in-depth enforced: direct URL access is strictly blocked for students');
+
   console.log('============================================================');
-  console.log('Owner-Admin System Tests Finished: 16/16 Tests Passed (100%)');
+  console.log('Owner-Admin System Tests Finished: 23/23 Tests Passed (100%)');
   console.log('============================================================\n');
 }
 

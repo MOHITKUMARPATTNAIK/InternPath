@@ -468,14 +468,14 @@ export default function AdminDashboardPage() {
             <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30">
               <Shield className="w-5 h-5" />
             </div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Admin & Verification Console</h1>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Resource Management & Admin Console</h1>
             <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-400/20 text-amber-300 border border-amber-400/30">
               Clearance: {user?.role || 'admin'}
             </span>
           </div>
           <p className="text-xs text-slate-400 max-w-xl leading-relaxed">
-            Manage trusted Indian institutional sources, review and publish opportunities, monitor data collectors,
-            and resolve user feedback reports.
+            Manage verified Indian institutional opportunities, trusted source registry, automated collectors,
+            and editorial review queues.
           </p>
         </div>
 

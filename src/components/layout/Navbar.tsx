@@ -4,13 +4,15 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { isUserAdmin } from '@/types';
 import {
   Bookmark,
   User,
   LogOut,
-  Shield,
+  Database,
   Menu,
   X,
+  type LucideIcon,
 } from 'lucide-react';
 
 export function Navbar() {
@@ -27,12 +29,23 @@ export function Navbar() {
     router.push('/auth/signup');
   };
 
-  const navLinks = [
+  interface NavLinkItem {
+    label: string;
+    href: string;
+    requiresAuth?: boolean;
+    adminOnly?: boolean;
+    icon?: LucideIcon;
+  }
+
+  const navLinks: NavLinkItem[] = [
     ...(user ? [] : [{ label: 'Home', href: '/' }]),
     { label: 'Explore Internships', href: '/internships' },
     { label: 'Categories', href: '/categories' },
     { label: 'Saved Internships', href: '/saved', requiresAuth: true },
     { label: 'My Profile', href: '/profile', requiresAuth: true },
+    ...(isUserAdmin(user?.role)
+      ? [{ label: 'Resource Management', href: '/admin', adminOnly: true, icon: Database }]
+      : []),
   ];
 
   const isActive = (href: string) => {
@@ -64,17 +77,23 @@ export function Navbar() {
             <div className="hidden md:flex items-center space-x-1 lg:space-x-2">
               {navLinks.map((link) => {
                 const active = isActive(link.href);
+                const Icon = link.icon;
                 return (
                   <Link
                     key={link.href}
                     href={link.href}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
                       active
-                        ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+                        ? link.adminOnly
+                          ? 'bg-amber-100 text-amber-900 font-semibold shadow-2xs'
+                          : 'bg-indigo-50 text-indigo-700 font-semibold'
+                        : link.adminOnly
+                          ? 'text-amber-800 hover:text-amber-900 hover:bg-amber-50 font-semibold'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                     }`}
                   >
-                    {link.label}
+                    {Icon && <Icon className="w-4 h-4 text-amber-600 flex-shrink-0" />}
+                    <span>{link.label}</span>
                   </Link>
                 );
               })}
@@ -83,17 +102,17 @@ export function Navbar() {
 
           {/* Right Action Menu */}
           <div className="hidden md:flex items-center gap-3">
-            {user?.role === 'admin' && (
+            {isUserAdmin(user?.role) && (
               <Link
                 href="/admin"
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
                   pathname.startsWith('/admin')
-                    ? 'bg-amber-100 text-amber-900 border-amber-300'
+                    ? 'bg-amber-100 text-amber-900 border-amber-300 shadow-2xs'
                     : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
                 }`}
               >
-                <Shield className="w-3.5 h-3.5 text-amber-600" />
-                <span>Admin Console</span>
+                <Database className="w-3.5 h-3.5 text-amber-600" />
+                <span>Resource Management</span>
               </Link>
             )}
 
@@ -142,14 +161,14 @@ export function Navbar() {
                       <span>Saved Internships</span>
                     </Link>
 
-                    {user.role === 'admin' && (
+                    {isUserAdmin(user.role) && (
                       <Link
                         href="/admin"
                         onClick={() => setUserDropdownOpen(false)}
                         className="flex items-center gap-2 px-4 py-2 text-xs text-amber-800 hover:bg-amber-50 transition"
                       >
-                        <Shield className="w-3.5 h-3.5 text-amber-600" />
-                        <span>Admin Dashboard</span>
+                        <Database className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Resource Management</span>
                       </Link>
                     )}
 
@@ -185,12 +204,13 @@ export function Navbar() {
 
           {/* Mobile Menu Button */}
           <div className="flex md:hidden items-center gap-2">
-            {user?.role === 'admin' && (
+            {isUserAdmin(user?.role) && (
               <Link
                 href="/admin"
-                className="p-1.5 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 text-xs font-semibold"
+                className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 text-xs font-semibold"
               >
-                Admin
+                <Database className="w-3.5 h-3.5 text-amber-600" />
+                <span>Resources</span>
               </Link>
             )}
             <button
@@ -209,18 +229,24 @@ export function Navbar() {
         <div className="md:hidden border-t border-slate-200 bg-white px-4 pt-2 pb-5 space-y-1">
           {navLinks.map((link) => {
             const active = isActive(link.href);
+            const Icon = link.icon;
             return (
               <Link
                 key={link.href}
                 href={link.href}
                 onClick={() => setMobileMenuOpen(false)}
-                className={`block px-3 py-2 rounded-lg text-sm font-medium transition ${
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition ${
                   active
-                    ? 'bg-indigo-50 text-indigo-700 font-semibold'
-                    : 'text-slate-700 hover:bg-slate-50'
+                    ? link.adminOnly
+                      ? 'bg-amber-100 text-amber-900 font-semibold shadow-2xs'
+                      : 'bg-indigo-50 text-indigo-700 font-semibold'
+                    : link.adminOnly
+                      ? 'text-amber-800 hover:bg-amber-50 font-semibold'
+                      : 'text-slate-700 hover:bg-slate-50'
                 }`}
               >
-                {link.label}
+                {Icon && <Icon className="w-4 h-4 text-amber-600 flex-shrink-0" />}
+                <span>{link.label}</span>
               </Link>
             );
           })}

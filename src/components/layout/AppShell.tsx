@@ -97,7 +97,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <p className="text-xs text-slate-500 font-medium">Clearance Level: Student (Insufficient)</p>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed">
-              The Admin Console and automated collection pipeline controls are restricted to verified supervisors.
+              Resource Management and administrative console controls are restricted to verified supervisors.
               Your account does not possess administrator privileges.
             </p>
             <div className="pt-2">
